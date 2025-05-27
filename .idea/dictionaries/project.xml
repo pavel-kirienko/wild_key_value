@@ -2,6 +2,8 @@
   <dictionary name="project">
     <words>
       <w>kirienko</w>
+      <w>segbuf</w>
+      <w>strdup</w>
       <w>wildset</w>
     </words>
   </dictionary>

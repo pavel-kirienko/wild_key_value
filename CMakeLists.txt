@@ -3,7 +3,7 @@
 # Author: Pavel Kirienko <pavel@opencyphal.org>
 
 cmake_minimum_required(VERSION 3.12)
-project(cavl_tests C CXX)
+project(wildset_tests C CXX)
 enable_testing()
 
 set(CTEST_OUTPUT_ON_FAILURE ON)
@@ -47,4 +47,5 @@ target_compile_definitions(unity PUBLIC -DUNITY_SHORTHAND_AS_RAW=1 -DUNITY_OUTPU
 
 add_executable(test_wildset ${CMAKE_CURRENT_SOURCE_DIR}/test.cpp)
 target_link_libraries(test_wildset unity)
+target_compile_definitions(test_wildset PUBLIC WILDSET_KEY_MAX_LEN=256)
 add_test("run_test" "test_wildset")

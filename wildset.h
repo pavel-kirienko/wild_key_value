@@ -61,27 +61,27 @@ extern "C"
 /// Matches any segment; shall be surrounded by separators. E.g.: "foo/*/baz"
 #define WILDSET_STAR '*'
 
-struct wildset_child_t
-{
-    const char*            seg;
-    struct wildset_node_t* next;
-};
-
+/// The size of a node is 4*sizeof(void*), which happens to be the smallest allocation size of o1heap -- efficient.
 struct wildset_node_t
 {
-    size_t                  n_children;
-    struct wildset_child_t* children; ///< Dynamically sized array of children ordered lexicographically.
-    void*                   payload;  ///< NULL if this is not a full key.
+    size_t                 n_edges;
+    struct wildset_edge_t* edges;   ///< Dynamically sized array of edges ordered lexicographically for bisection.
+    void*                  payload; ///< NULL if this is not a full key.
+};
+
+struct wildset_edge_t
+{
+    struct wildset_node_t next; ///< Base type.
+    const char*           seg;
 };
 
 /// When a new entry is inserted, Wildset needs to allocate tree nodes in the dynamic memory.
 /// There are allocations of the following sizes:
-/// - sizeof(struct wildset_node_t)
 /// - strlen(key_segment)
-/// - n_children*sizeof(struct wildset_child_t))
+/// - n_edges*sizeof(struct wildset_edge_t))
 ///
 /// Realloc is used to allocate new memory with the original pointer being NULL, and also to resize the
-/// children array when entries are added/removed. The semantics are per the standard realloc from stdlib,
+/// edges array when entries are added/removed. The semantics are per the standard realloc from stdlib,
 /// with one difference: if the fragment is reduced in size, reallocation must always succeed.
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
@@ -93,7 +93,7 @@ typedef void (*wildset_on_match_t)(struct wildset_t* self, void* context, void* 
 
 struct wildset_t
 {
-    struct wildset_node_t root;
+    struct wildset_node_t root; ///< Base type -- the root is a node.
 
     wildset_realloc_t realloc;
     wildset_free_t    free;
@@ -107,11 +107,11 @@ static inline void wildset_init(struct wildset_t* const self,
                                 const wildset_free_t    free)
 {
     memset(self, 0, sizeof(*self));
-    self->root.n_children = 0;
-    self->root.children   = NULL;
-    self->root.payload    = NULL; // the root carries no payload
-    self->realloc         = realloc;
-    self->free            = free;
+    self->root.n_edges = 0;
+    self->root.edges   = NULL;
+    self->root.payload = NULL; // the root carries no payload
+    self->realloc      = realloc;
+    self->free         = free;
 }
 
 /// None of the pointers are allowed to be NULL.
@@ -145,25 +145,25 @@ static inline void* _wildset_alloc(struct wildset_t* const self, const size_t si
     return self->realloc(self, NULL, size);
 }
 
-static inline void _wildset_free(struct wildset_t* const self, void* const ptr)
+static inline void _wildset_free(struct wildset_t* const self, const void* const ptr)
 {
     if (ptr != NULL) {
-        self->free(self, ptr);
+        self->free(self, (void*)ptr);
     }
 }
 
-static inline struct wildset_node_t* _wildset_node_new(struct wildset_t* const self)
+/// Commonly occurring strings are interned.
+/// This is why deallocation must only be done using the special _wildset_str_free() function.
+static const char* _wildset_strdup(struct wildset_t* const self, const char* const str)
 {
-    WILDSET_ASSERT(self != NULL);
-    struct wildset_node_t* const nd = (struct wildset_node_t*)_wildset_alloc(self, sizeof(struct wildset_node_t));
-    if (nd != NULL) {
-        *nd = (struct wildset_node_t){ .n_children = 0, .children = NULL, .payload = NULL };
+    WILDSET_ASSERT(str != NULL);
+    if (str[0] == '\0') {
+        return "";
     }
-    return nd;
-}
-
-static char* _wildset_strdup(struct wildset_t* const self, const char* const str)
-{
+    if ((str[0] == WILDSET_STAR) && (str[1] == '\0')) {
+        static const char interned_star[] = { WILDSET_STAR, '\0' };
+        return interned_star;
+    }
     const size_t len = strnlen(str, WILDSET_KEY_MAX_LEN);
     char* const  out = (char*)self->realloc(self, NULL, len + 1U);
     if (out != NULL) {
@@ -173,15 +173,24 @@ static char* _wildset_strdup(struct wildset_t* const self, const char* const str
     return out;
 }
 
-// Binary search inside n->child (which we keep sorted). Returns insertion point if the segment is not found.
+static void _wildset_str_free(struct wildset_t* const self, const char* const str)
+{
+    WILDSET_ASSERT(str != NULL);
+    const bool is_interned = (str[0] == '\0') || ((str[0] == WILDSET_STAR) && (str[1] == '\0'));
+    if (!is_interned) {
+        _wildset_free(self, str);
+    }
+}
+
+/// Binary search inside n->edge (which we keep sorted). Returns insertion point if the segment is not found.
 static ptrdiff_t _wildset_bisect(struct wildset_node_t* const node, const char* const seg)
 {
     WILDSET_ASSERT((node != NULL) && (seg != NULL));
     size_t lo = 0;
-    size_t hi = node->n_children;
+    size_t hi = node->n_edges;
     while (lo < hi) {
         const size_t mid = (lo + hi) / 2U;
-        const int    cmp = strncmp(seg, node->children[mid].seg, WILDSET_KEY_MAX_LEN);
+        const int    cmp = strncmp(seg, node->edges[mid].seg, WILDSET_KEY_MAX_LEN);
         if (cmp == 0) {
             return (ptrdiff_t)mid;
         }
@@ -211,34 +220,35 @@ static inline void* wildset_add(struct wildset_t* const self, const char* const 
         segbuf[len] = '\0';
 
         ptrdiff_t k = _wildset_bisect(n, segbuf);
-        if (k < 0) { // Insort the new child.
+        if (k < 0) { // Insort the new edge.
             k = -(k + 1);
-            WILDSET_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_children));
+            WILDSET_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
 
-            // Allocate all memory at once to simplify error handling.
-            void* const new_ch = self->realloc(self, n->children, (n->n_children + 1) * sizeof(struct wildset_child_t));
-            char* const new_seg                   = _wildset_strdup(self, segbuf);
-            struct wildset_node_t* const new_node = _wildset_node_new(self);
-
-            if ((new_ch == NULL) || (new_seg == NULL) || (new_node == NULL)) {
-                _wildset_free(self, new_seg);
-                _wildset_free(self, new_node);
-                if (new_ch != NULL) { // Restore the original children array.
-                    const void* const ok = self->realloc(self, new_ch, n->n_children * sizeof(struct wildset_child_t));
-                    WILDSET_ASSERT(ok != NULL); // Downsizing shall never fail by contract!
-                    (void)ok;
+            // Allocate memory for the new edge and the segment. This may fail.
+            const char* new_seg = NULL;
+            {
+                struct wildset_edge_t* const new_edg = (struct wildset_edge_t*)self->realloc(
+                  self, n->edges, (n->n_edges + 1) * sizeof(struct wildset_edge_t));
+                if (new_edg != NULL) {  // Even if we bail later, we keep this larger array allocated as-is.
+                    n->edges = new_edg; // It will be resized on next removal or insertion.
+                    new_seg  = _wildset_strdup(self, segbuf);
                 }
-                // TODO: handle allocation failure -- backtrack to remove the children that we created so far.
+            }
+            WILDSET_ASSERT(n->edges != NULL);
+
+            // Either backtrack on allocation failure, or insert the new edge.
+            if (new_seg == NULL) {
+                _wildset_str_free(self, new_seg);
+                // TODO: handle allocation failure -- backtrack to remove the edges that we created so far.
                 // copy (key...p) into segbuf and invoke wildset_remove()?
             } else {
-                n->children = (struct wildset_child_t*)new_ch;
-                memmove(&n->children[k + 1], &n->children[k], (n->n_children - k) * sizeof(struct wildset_child_t));
-                n->children[k].seg  = new_seg;
-                n->children[k].next = new_node;
-                n->n_children++;
+                memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - k) * sizeof(struct wildset_edge_t));
+                n->edges[k].next = (struct wildset_node_t){ .n_edges = 0, .edges = NULL, .payload = NULL };
+                n->edges[k].seg  = new_seg;
+                n->n_edges++;
             }
         }
-        n = n->children[k].next;
+        n = &n->edges[k].next;
         if (!seg_end) {
             break; // last segment consumed
         }

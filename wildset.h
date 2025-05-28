@@ -55,17 +55,6 @@ extern "C"
 #error "WILDSET_KEY_MAX_LEN must be defined as a positive integer value"
 #endif
 
-/// Key name segments are slash-separated; e.g., "foo/bar/baz"
-#ifndef WILDSET_SEP
-#define WILDSET_SEP '/'
-#endif
-
-/// Matches any segment if surrounded by separators; e.g.: "foo/*/baz".
-/// Otherwise, treated just like an ordinary segment; e.g., "foo/*ar/baz" matches only "foo/*ar/baz".
-#ifndef WILDSET_STAR
-#define WILDSET_STAR '*'
-#endif
-
 struct wildset_node_t
 {
     size_t                  n_edges;
@@ -101,7 +90,7 @@ typedef void (*wildset_on_match_t)(struct wildset_t* self, void* context, void* 
 
 struct wildset_t
 {
-    struct wildset_node_t root; ///< Base type -- the root is a node.
+    struct wildset_node_t root; ///< Base type.
 
     wildset_realloc_t realloc;
     wildset_free_t    free;
@@ -110,16 +99,9 @@ struct wildset_t
 };
 
 /// Use this to create a new Wildset instance. The context pointer can be set and mutated arbitrarily later.
-static inline void wildset_init(struct wildset_t* const self,
-                                const wildset_realloc_t realloc,
-                                const wildset_free_t    free)
+static inline struct wildset_t wildset_init(const wildset_realloc_t realloc, const wildset_free_t free)
 {
-    memset(self, 0, sizeof(*self));
-    self->root.n_edges = 0;
-    self->root.edges   = NULL;
-    self->root.payload = NULL; // the root carries no payload
-    self->realloc      = realloc;
-    self->free         = free;
+    return (struct wildset_t){ .root = { .edges = NULL }, .realloc = realloc, .free = free };
 }
 
 /// None of the pointers are allowed to be NULL.
@@ -128,32 +110,28 @@ static inline void wildset_init(struct wildset_t* const self,
 /// - If this key is already known (not unique), the payload value of the existing key.
 /// - NULL if out of memory.
 /// Therefore, to check if the key is inserted successfully, compare the returned value against the original payload.
-static inline void* wildset_add(struct wildset_t* const self, const char* const key, void* const payload);
+static inline void* wildset_add(struct wildset_t* const self, const char* const key, const char sep, void* const payload);
 
 /// Returns true if the key was removed, false if it didn't exist.
-static inline bool wildset_remove(struct wildset_t* const self, const char* const key);
+static inline bool wildset_remove(struct wildset_t* const self, const char* const key, const char sep);
 
 /// Find keys in the tree of keys that match the given wildcard pattern.
 /// The pattern doesn't actually have to be a pattern, it can be an ordinary key name as well.
 static inline void wildset_find_keys(struct wildset_t* const  self,
                                      const char* const        pat,
+                                     const char               star,
                                      void* const              context,
                                      const wildset_on_match_t on_match);
 
 /// Find wildcard patterns in the tree of patterns that match the given key.
 static inline void wildset_find_pats(struct wildset_t* const  self,
                                      const char* const        key,
+                                     const char               star,
                                      void* const              context,
                                      const wildset_on_match_t on_match);
 
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
-
-static inline void* _wildset_alloc(struct wildset_t* const self, const size_t size)
-{
-    WILDSET_ASSERT(self != NULL);
-    return self->realloc(self, NULL, size);
-}
 
 static inline void _wildset_free(struct wildset_t* const self, void* const ptr)
 {
@@ -171,6 +149,7 @@ static struct wildset_edge_t* _wildset_edge_new(struct wildset_t* const self, co
     struct wildset_edge_t* const edge =
       (struct wildset_edge_t*)self->realloc(self, NULL, sizeof(struct wildset_node_t) + len + 1U);
     if (edge != NULL) {
+        edge->next = (struct wildset_node_t){ .n_edges = 0, .edges = NULL, .payload = NULL };
         memcpy(&edge->seg[0], str, len);
         edge->seg[len] = '\0';
     }
@@ -195,19 +174,19 @@ static ptrdiff_t _wildset_bisect(struct wildset_node_t* const node, const char* 
             lo = mid + 1;
         }
     }
-    return -(((ptrdiff_t)lo) + 1); /* insertion point */
+    return -(((ptrdiff_t)lo) + 1); // insertion point
 }
 
-static inline void* wildset_add(struct wildset_t* const self, const char* const key, void* const payload)
+static inline void* wildset_add(struct wildset_t* const self, const char* const key, const char sep, void* const payload)
 {
-    if ((self == NULL) || (key == NULL) || (payload == NULL)) {
+    if ((self == NULL) || (key == NULL) || (sep == '\0') || (payload == NULL)) {
         WILDSET_ASSERT(false);
         return NULL;
     }
     struct wildset_node_t* n = &self->root;
     const char*            p = key;
     for (;;) {
-        const char* const seg_end = (const char*)memchr(p, WILDSET_SEP, WILDSET_KEY_MAX_LEN);
+        const char* const seg_end = (const char*)memchr(p, sep, WILDSET_KEY_MAX_LEN);
         const size_t      len     = (seg_end != NULL) ? (size_t)(seg_end - p) : strnlen(p, WILDSET_KEY_MAX_LEN);
 
         char segbuf[WILDSET_KEY_MAX_LEN + 1U];
@@ -218,8 +197,7 @@ static inline void* wildset_add(struct wildset_t* const self, const char* const 
         if (k < 0) { // Insort the new edge.
             k = -(k + 1);
             WILDSET_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
-
-            // Allocate memory for the new edge and the segment. This may fail.
+            // Expand the edge pointer array and allocate the new edge. This may fail.
             struct wildset_edge_t* new_e = NULL;
             {
                 struct wildset_edge_t** const new_edges = (struct wildset_edge_t**)self->realloc(
@@ -230,14 +208,11 @@ static inline void* wildset_add(struct wildset_t* const self, const char* const 
                 }
             }
             WILDSET_ASSERT(n->edges != NULL);
-
-            // Either backtrack on allocation failure, or insert the new edge.
             if (new_e == NULL) {
                 // TODO: handle allocation failure -- backtrack to remove the edges that we created so far.
                 // copy (key...p) into segbuf and invoke wildset_remove()?
             } else {
                 memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - k) * sizeof(struct wildset_edge_t*));
-                new_e->next = (struct wildset_node_t){ .n_edges = 0, .edges = NULL, .payload = NULL };
                 n->edges[k] = new_e;
                 n->n_edges++;
             }

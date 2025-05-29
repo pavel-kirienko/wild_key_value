@@ -57,6 +57,7 @@ extern "C"
 
 struct wkv_node_t
 {
+    struct wkv_node_t*  parent; ///< NULL if this is the root node.
     size_t              n_edges;
     struct wkv_edge_t** edges;   ///< Contiguous edge pointers ordered lexicographically for bisection.
     void*               payload; ///< NULL if this is not a full key.
@@ -91,6 +92,8 @@ typedef void (*wkv_free_t)(struct wkv_t* self, void* ptr);
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
 typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, void* payload);
 
+/// Once initialized, the instance shall not be moved or copied, as that breaks parent links in the tree.
+/// Hint: pointer to a node with parent=NULL is the pointer to wkv_t of the current tree.
 struct wkv_t
 {
     struct wkv_node_t root; ///< Base type.
@@ -106,6 +109,7 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_
 {
     struct wkv_t out;
     memset(&out, 0, sizeof(struct wkv_t));
+    out.root.parent  = NULL;
     out.root.edges   = NULL;
     out.root.payload = NULL;
     out.realloc      = realloc;
@@ -146,6 +150,17 @@ static inline void* wkv_find_pats(struct wkv_t* const  self,
                                   void* const          context,
                                   const wkv_on_match_t on_match);
 
+/// A helper that obtains the wkv_t instance of the current tree from any of its nodes.
+/// The complexity is linear of the maximum number of segments in any of the keys.
+static inline struct wkv_t* wkv_get_self(struct wkv_node_t* node)
+{
+    WKV_ASSERT(node != NULL);
+    while (node->parent != NULL) {
+        node = node->parent;
+    }
+    return (struct wkv_t*)node;
+}
+
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
 
@@ -158,12 +173,16 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 }
 
 /// Allocates the edge and its key segment in the same dynamically-sized memory block.
-static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const self, const size_t seg_len, const char* const seg)
+static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
+                                        struct wkv_node_t* const parent,
+                                        const size_t             seg_len,
+                                        const char* const        seg)
 {
     WKV_ASSERT(seg != NULL);
     struct wkv_edge_t* const edge =
       (struct wkv_edge_t*)self->realloc(self, NULL, offsetof(struct wkv_edge_t, seg) + seg_len + 1U);
     if (edge != NULL) {
+        edge->node.parent  = parent;
         edge->node.n_edges = 0;
         edge->node.edges   = NULL;
         edge->node.payload = NULL;
@@ -199,11 +218,9 @@ static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const size_t seg_len
     return -(((ptrdiff_t)lo) + 1); // insertion point; +1 is to handle the case of zero index insertion
 }
 
-static inline bool _wkv_backtrack(struct wkv_t* const self, const size_t key_len, const char* const key, const char sep)
+static inline void _wkv_backtrack(struct wkv_t* const self, struct wkv_node_t* const node)
 {
-    WKV_ASSERT((self != NULL) && (key != NULL) && (sep != '\0'));
-    (void)key_len;
-    return false;
+    WKV_ASSERT((self != NULL) && (node != NULL));
 }
 
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
@@ -216,8 +233,8 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
     const char*        seg           = key;
     size_t             remaining_len = strnlen(seg, WKV_KEY_MAX_LEN);
     for (;;) {
-        const char* const seg_end = (const char*)memchr(seg, sep, remaining_len);
-        const size_t      seg_len = (seg_end != NULL) ? (size_t)(seg_end - seg) : remaining_len;
+        const char* const slash   = (const char*)memchr(seg, sep, remaining_len);
+        const size_t      seg_len = (slash != NULL) ? (size_t)(slash - seg) : remaining_len;
 
         ptrdiff_t k = _wkv_bisect(n, seg_len, seg);
         if (k < 0) { // Insort the new edge.
@@ -230,13 +247,13 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
                   (struct wkv_edge_t**)self->realloc(self, n->edges, (n->n_edges + 1) * sizeof(struct wkv_edge_t*));
                 if (new_edges != NULL) {  // Even if we bail later, we keep this larger array allocated as-is.
                     n->edges = new_edges; // It will be resized on node removal or insertion.
-                    new_e    = _wkv_edge_new(self, seg_len, seg);
+                    new_e    = _wkv_edge_new(self, n, seg_len, seg);
                 }
             }
             if (NULL == new_e) {
                 if (seg != key) { // otherwise, we haven't inserted anything yet
                     WKV_ASSERT(seg > key);
-                    (void)_wkv_backtrack(self, (size_t)(seg - key), key, sep);
+                    _wkv_backtrack(self, n);
                 }
                 return NULL;
             }
@@ -246,11 +263,12 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
             n->n_edges++;
         }
         WKV_ASSERT(n->edges != NULL);
+        WKV_ASSERT(n == n->edges[k]->node.parent);
         n = &n->edges[k]->node;
-        if (seg_end == NULL) {
+        if (slash == NULL) {
             break;
         }
-        seg = seg_end + 1;
+        seg = slash + 1;
         WKV_ASSERT(remaining_len > seg_len);
         remaining_len -= seg_len + 1;
     }

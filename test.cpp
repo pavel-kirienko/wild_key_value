@@ -77,7 +77,9 @@ void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
     const auto indent = static_cast<int>(depth * 2);
     for (std::size_t i = 0; i < node->n_edges; ++i) {
         const ::wkv_edge_t* const edge = node->edges[i];
-        char                      payload[256];
+        TEST_ASSERT(edge != nullptr);
+        TEST_ASSERT_EQUAL_PTR(edge->node.parent, node);
+        char payload[256];
         if (edge->node.payload != nullptr) {
             (void)std::snprintf(payload, sizeof(payload), "%p", edge->node.payload);
         } else {

@@ -65,8 +65,9 @@ struct wkv_node_t
 struct wkv_edge_t
 {
     struct wkv_node_t node; ///< Base type.
-
+    size_t            seg_len;
     /// This is a flex array; it may be shorter than this depending on the segment length.
+    /// It is always null-terminated, so it can be used as a C string.
     /// https://www.open-std.org/Jtc1/sc22/wg14/www/docs/dr_051.html
     char seg[WKV_KEY_MAX_LEN + 1];
 };
@@ -157,31 +158,35 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 }
 
 /// Allocates the edge and its key segment in the same dynamically-sized memory block.
-static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const self, const char* const str)
+static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const self, const size_t seg_len, const char* const seg)
 {
-    WKV_ASSERT(str != NULL);
-    const size_t             len  = strnlen(str, WKV_KEY_MAX_LEN);
-    struct wkv_edge_t* const edge = (struct wkv_edge_t*)self->realloc(self, NULL, sizeof(struct wkv_node_t) + len + 1U);
+    WKV_ASSERT(seg != NULL);
+    struct wkv_edge_t* const edge =
+      (struct wkv_edge_t*)self->realloc(self, NULL, offsetof(struct wkv_edge_t, seg) + seg_len + 1U);
     if (edge != NULL) {
         edge->node.n_edges = 0;
         edge->node.edges   = NULL;
         edge->node.payload = NULL;
-        memcpy(&edge->seg[0], str, len);
-        edge->seg[len] = '\0';
+        edge->seg_len      = seg_len;
+        memcpy(&edge->seg[0], seg, seg_len);
+        edge->seg[seg_len] = '\0';
     }
     return edge;
 }
 
 /// Binary search inside n->edge (which we keep sorted).
 /// Returns negated (insertion point plus one) if the segment is not found.
-static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const char* const seg)
+static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const size_t seg_len, const char* const seg)
 {
     WKV_ASSERT((node != NULL) && (seg != NULL));
     size_t lo = 0;
     size_t hi = node->n_edges;
     while (lo < hi) {
         const size_t mid = (lo + hi) / 2U;
-        const int    cmp = strncmp(seg, node->edges[mid]->seg, WKV_KEY_MAX_LEN);
+        // ultra-fast comparison thanks to knowing the length of both segments
+        const ptrdiff_t cmp = (seg_len == node->edges[mid]->seg_len)
+                                ? memcmp(seg, node->edges[mid]->seg, seg_len)
+                                : ((ptrdiff_t)seg_len - (ptrdiff_t)node->edges[mid]->seg_len);
         if (cmp == 0) {
             return (ptrdiff_t)mid;
         }
@@ -194,9 +199,11 @@ static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const char* const se
     return -(((ptrdiff_t)lo) + 1); // insertion point; +1 is to handle the case of zero index insertion
 }
 
-static inline void _wkv_backtrack(struct wkv_t* const self, const char* const key, const char sep)
+static inline bool _wkv_backtrack(struct wkv_t* const self, const size_t key_len, const char* const key, const char sep)
 {
     WKV_ASSERT((self != NULL) && (key != NULL) && (sep != '\0'));
+    (void)key_len;
+    return false;
 }
 
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
@@ -205,17 +212,14 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
         WKV_ASSERT(false);
         return NULL;
     }
-    struct wkv_node_t* n = &self->root;
-    const char*        p = key;
+    struct wkv_node_t* n             = &self->root;
+    const char*        seg           = key;
+    size_t             remaining_len = strnlen(seg, WKV_KEY_MAX_LEN);
     for (;;) {
-        const size_t      p_len   = strnlen(p, WKV_KEY_MAX_LEN);
-        const char* const seg_end = (const char*)memchr(p, sep, p_len);
-        const size_t      len     = (seg_end != NULL) ? (size_t)(seg_end - p) : p_len;
+        const char* const seg_end = (const char*)memchr(seg, sep, remaining_len);
+        const size_t      seg_len = (seg_end != NULL) ? (size_t)(seg_end - seg) : remaining_len;
 
-        char segbuf[WKV_KEY_MAX_LEN + 1U];
-        memcpy(segbuf, p, len);
-        segbuf[len] = '\0';
-        ptrdiff_t k = _wkv_bisect(n, segbuf);
+        ptrdiff_t k = _wkv_bisect(n, seg_len, seg);
         if (k < 0) { // Insort the new edge.
             k = -(k + 1);
             WKV_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
@@ -226,30 +230,29 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
                   (struct wkv_edge_t**)self->realloc(self, n->edges, (n->n_edges + 1) * sizeof(struct wkv_edge_t*));
                 if (new_edges != NULL) {  // Even if we bail later, we keep this larger array allocated as-is.
                     n->edges = new_edges; // It will be resized on node removal or insertion.
-                    new_e    = _wkv_edge_new(self, segbuf);
+                    new_e    = _wkv_edge_new(self, seg_len, seg);
                 }
             }
-            if (new_e == NULL) {
-                if (p != key) { // otherwise, we haven't inserted anything yet
-                    const size_t prefix_len = (size_t)(p - key) + len;
-                    memcpy(segbuf, key, prefix_len);
-                    segbuf[prefix_len] = '\0';
-                    _wkv_backtrack(self, segbuf, sep);
-                    return NULL;
+            if (NULL == new_e) {
+                if (seg != key) { // otherwise, we haven't inserted anything yet
+                    WKV_ASSERT(seg > key);
+                    (void)_wkv_backtrack(self, (size_t)(seg - key), key, sep);
                 }
-            } else {
-                WKV_ASSERT(n->edges != NULL);
-                memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
-                n->edges[k] = new_e;
-                n->n_edges++;
+                return NULL;
             }
+            WKV_ASSERT(n->edges != NULL);
+            memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
+            n->edges[k] = new_e;
+            n->n_edges++;
         }
         WKV_ASSERT(n->edges != NULL);
         n = &n->edges[k]->node;
         if (seg_end == NULL) {
             break;
         }
-        p = seg_end + 1;
+        seg = seg_end + 1;
+        WKV_ASSERT(remaining_len > seg_len);
+        remaining_len -= seg_len + 1;
     }
     WKV_ASSERT(n != NULL);
     // Do not overwrite the payload if it is already set. The caller will detect this by checking the return value.

@@ -37,12 +37,17 @@ public:
     {
         return static_cast<Memory*>(self->context)->realloc(ptr, new_size);
     }
-    static void trampoline_free(wkv_t* const self, void* const ptr) { static_cast<Memory*>(self->context)->free(ptr); }
 
 private:
     [[nodiscard]] void* realloc(void* const ptr, const std::size_t new_size)
     {
-        TEST_ASSERT(new_size > 0);
+        if (new_size == 0) {
+            TEST_ASSERT(ptr != nullptr);
+            TEST_ASSERT(fragments_ > 0);
+            std::free(ptr);
+            --fragments_;
+            return nullptr;
+        }
         if (ptr == nullptr) {
             if (fragments_ < fragments_cap_) {
                 ++fragments_;
@@ -57,14 +62,6 @@ private:
         }
         ++oom_count_;
         return nullptr;
-    }
-
-    void free(void* const ptr)
-    {
-        TEST_ASSERT(ptr != nullptr);
-        TEST_ASSERT(fragments_ > 0);
-        std::free(ptr);
-        --fragments_;
     }
 
     std::size_t fragments_     = 0;
@@ -98,7 +95,7 @@ void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
 void test_basic()
 {
     Memory mem(50);
-    wkv_t  wkv = wkv_init(Memory::trampoline_realloc, Memory::trampoline_free, &mem);
+    wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "foo", '/', i2ptr(0xA)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "/foo/", '/', i2ptr(0xB)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "//foo//", '/', i2ptr(0xC)));

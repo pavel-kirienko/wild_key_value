@@ -50,11 +50,12 @@ extern "C"
 
 // ----------------------------------------         PUBLIC API SECTION         ----------------------------------------
 
-/// This is used for safe string operations and to allocate temporary storage on the stack during insertion.
+/// This is used only for safe string operations. Does not affect the memory footprint.
 #ifndef WKV_KEY_MAX_LEN
-#error "WKV_KEY_MAX_LEN must be defined as a positive integer value"
+#define WKV_KEY_MAX_LEN (1024U * 1024U)
 #endif
 
+/// A fundamental invariant of WKV is that every node has EITHER a payload or outgoing edges.
 struct wkv_node_t
 {
     struct wkv_node_t*  parent; ///< NULL if this is the root node.
@@ -79,14 +80,16 @@ struct wkv_edge_t
 /// - n_edges * sizeof(pointer)
 /// Each node takes one allocation, unless it has no outgoing edges; each edge takes one allocation always.
 ///
-/// Realloc is used to allocate new memory with the original pointer being NULL, and also to resize the edges pointer
-/// array when entries are added/removed.
+/// Realloc is used to:
+/// - Allocate new memory with the original pointer being NULL.
+/// - To free memory when the size is zero.
+/// - To resize the edges pointer array when entries are added/removed.
+///
 /// The semantics are per the standard realloc from stdlib, with one difference: if the fragment is reduced in size,
-/// reallocation must always succeed.
+/// reallocation MUST succeed.
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
-typedef void (*wkv_free_t)(struct wkv_t* self, void* ptr);
 
 /// Invoked on every match while searching.
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
@@ -97,15 +100,12 @@ typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, void* payload
 struct wkv_t
 {
     struct wkv_node_t root; ///< Base type.
-
-    wkv_realloc_t realloc;
-    wkv_free_t    free;
-
-    void* context; ///< Can be assigned by the user code arbitrarily.
+    wkv_realloc_t     realloc;
+    void*             context; ///< Can be assigned by the user code arbitrarily.
 };
 
 /// Use this to create a new Wild Key-Value instance. The context pointer can be set and mutated arbitrarily later.
-static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_t free, void* const context)
+static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const context)
 {
     struct wkv_t out;
     memset(&out, 0, sizeof(struct wkv_t));
@@ -113,7 +113,6 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_
     out.root.edges   = NULL;
     out.root.payload = NULL;
     out.realloc      = realloc;
-    out.free         = free;
     out.context      = context;
     return out;
 }
@@ -168,7 +167,7 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 {
     WKV_ASSERT(self != NULL);
     if (ptr != NULL) {
-        self->free(self, ptr);
+        (void)self->realloc(self, ptr, 0);
     }
 }
 
@@ -218,9 +217,45 @@ static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const size_t seg_len
     return -(((ptrdiff_t)lo) + 1); // insertion point; +1 is to handle the case of zero index insertion
 }
 
-static inline void _wkv_backtrack(struct wkv_t* const self, struct wkv_node_t* const node)
+/// Returns the index of the edge pointing to this node in the parent's edge array.
+/// If the node is the root, then -1 is returned.
+static ptrdiff_t _wkv_locate_in_parent(struct wkv_node_t* const node)
+{
+    struct wkv_node_t* const parent = node->parent;
+    if (parent != NULL) {
+        struct wkv_edge_t* const edge = (struct wkv_edge_t*)node;
+        const ptrdiff_t          k    = _wkv_bisect(parent, edge->seg_len, edge->seg);
+        WKV_ASSERT((k >= 0) && (k < (ptrdiff_t)parent->n_edges));
+        WKV_ASSERT(parent->edges[k] == edge);
+        return k;
+    }
+    return -1; // The root node has no parent.
+}
+
+/// Starting from a leaf node, go up the tree and remove all nodes whose trace does not eventually lead to a full key.
+/// This is intended for aborting insertions when we run out of memory and have to backtrack.
+static inline void _wkv_trim(struct wkv_t* const self, struct wkv_node_t* const node)
 {
     WKV_ASSERT((self != NULL) && (node != NULL));
+    const ptrdiff_t k = _wkv_locate_in_parent(node);
+    if ((k >= 0) && (node->n_edges == 0) && (node->payload == NULL)) {
+        struct wkv_node_t* const p = node->parent;
+        WKV_ASSERT(p != NULL);
+        // Remove the edge from the parent's edge array.
+        memmove(&p->edges[k], &p->edges[k + 1], (p->n_edges - (size_t)k - 1) * sizeof(struct wkv_edge_t*));
+        p->n_edges--;
+        // This is optional but we want to be very frugal with memory, so we shrink the edges pointer array right away.
+        // We require that realloc always succeeds when the size is reduced.
+        p->edges = (struct wkv_edge_t**)self->realloc(self, p->edges, p->n_edges * sizeof(struct wkv_edge_t*));
+        WKV_ASSERT((p->edges != NULL) || (p->n_edges == 0));
+        // Free the edge and its segment. We use the node pointer which is the same as the edge pointer.
+        _wkv_free(self, node->edges); // This is probably NULL bc empty, but we don't enforce this.
+        _wkv_free(self, node);
+        // Removing the node from the parent may have caused the parent to become eligible for garbage collection.
+        _wkv_trim(self, p);
+    }
+    // If the node is not eligible for garbage collection, then all its parents are not eligible either,
+    // which means there is nothing left to do.
 }
 
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
@@ -251,10 +286,7 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
                 }
             }
             if (NULL == new_e) {
-                if (seg != key) { // otherwise, we haven't inserted anything yet
-                    WKV_ASSERT(seg > key);
-                    _wkv_backtrack(self, n);
-                }
+                _wkv_trim(self, n); // We may have inserted transient nodes that are now garbage. Clean them up.
                 return NULL;
             }
             WKV_ASSERT(n->edges != NULL);

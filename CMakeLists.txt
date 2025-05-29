@@ -47,5 +47,4 @@ target_compile_definitions(unity PUBLIC -DUNITY_SHORTHAND_AS_RAW=1 -DUNITY_OUTPU
 
 add_executable(test_wkv ${CMAKE_CURRENT_SOURCE_DIR}/test.cpp)
 target_link_libraries(test_wkv unity)
-target_compile_definitions(test_wkv PUBLIC WKV_KEY_MAX_LEN=256)
 add_test("run_test" "test_wkv")

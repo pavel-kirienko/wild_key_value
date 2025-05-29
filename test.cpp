@@ -120,51 +120,51 @@ void test_basic()
 
     // Insert some keys and check the count.
     TEST_ASSERT(wkv_is_empty(&wkv));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "foo", '/', i2ptr(0xA)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "/foo/", '/', i2ptr(0xB)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "//foo//", '/', i2ptr(0xC)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "/foo/bar", '/', i2ptr(0xD)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(0xE)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "/foo/bar/baz", '/', i2ptr(0xF)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_add(&wkv, "", '/', i2ptr(0x10)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "foo", i2ptr(0xA)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "/foo/", i2ptr(0xB)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "//foo//", i2ptr(0xC)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "/foo/bar", i2ptr(0xD)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", i2ptr(0xE)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "/foo/bar/baz", i2ptr(0xF)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_add(&wkv, "", i2ptr(0x10)));
     TEST_ASSERT_EQUAL_size_t(7, count(&wkv));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(1))); // conflict, ignored
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", i2ptr(1))); // conflict, ignored
     TEST_ASSERT_EQUAL_size_t(7, count(&wkv));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(1), wkv_set(&wkv, "/foo/bar/", '/', i2ptr(1))); // conflict, overwritten
+    TEST_ASSERT_EQUAL_PTR(i2ptr(1), wkv_set(&wkv, "/foo/bar/", i2ptr(1))); // conflict, overwritten
     TEST_ASSERT_EQUAL_size_t(7, count(&wkv));
     TEST_ASSERT(!wkv_is_empty(&wkv));
     print(&wkv.root);
     std::cout << "Fragments: " << mem.get_fragments() << ", OOMs: " << mem.get_oom_count() << std::endl;
 
     // Get some keys.
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_get(&wkv, "foo", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_get(&wkv, "/foo/", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_get(&wkv, "//foo//", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_get(&wkv, "/foo/bar", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_get(&wkv, "/foo/bar/", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_get(&wkv, "/foo/bar/baz", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_get(&wkv, "", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_get(&wkv, "foo"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_get(&wkv, "/foo/"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_get(&wkv, "//foo//"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_get(&wkv, "/foo/bar"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_get(&wkv, "/foo/bar/"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_get(&wkv, "/foo/bar/baz"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_get(&wkv, ""));
 
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "nonexistent", '/'));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "foo/", '/'));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/foo", '/'));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//foo", '/'));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/foo//", '/'));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/nonexistent/", '/'));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//nonexistent//", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "nonexistent"));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "foo/"));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/foo"));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//foo"));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/foo//"));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/nonexistent/"));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//nonexistent//"));
 
     // Delete some keys.
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_remove(&wkv, "foo", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_remove(&wkv, "foo"));
     TEST_ASSERT_EQUAL_size_t(6, count(&wkv));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_remove(&wkv, "foo", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_remove(&wkv, "foo"));
     TEST_ASSERT_EQUAL_size_t(6, count(&wkv));
 
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_remove(&wkv, "/foo/", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_remove(&wkv, "//foo//", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_remove(&wkv, "/foo/bar", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_remove(&wkv, "/foo/bar/", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_remove(&wkv, "/foo/bar/baz", '/'));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_remove(&wkv, "", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_remove(&wkv, "/foo/"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_remove(&wkv, "//foo//"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_remove(&wkv, "/foo/bar"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_remove(&wkv, "/foo/bar/"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_remove(&wkv, "/foo/bar/baz"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_remove(&wkv, ""));
 
     TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
     TEST_ASSERT(wkv_is_empty(&wkv));
@@ -175,7 +175,7 @@ void test_backtrack()
     {
         Memory mem(0);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a", '/', i2ptr(0xA)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a", i2ptr(0xA)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));
@@ -184,7 +184,7 @@ void test_backtrack()
     {
         Memory mem(1);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a", '/', i2ptr(0xA)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a", i2ptr(0xA)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(1, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));
@@ -193,7 +193,7 @@ void test_backtrack()
     {
         Memory mem(1);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(1, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));
@@ -202,7 +202,7 @@ void test_backtrack()
     {
         Memory mem(2);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));
@@ -212,7 +212,7 @@ void test_backtrack()
     {
         Memory mem(3);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(3, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));
@@ -222,16 +222,16 @@ void test_backtrack()
     {
         Memory mem(3); // top node A will be retained because it has a payload.
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "a", '/', i2ptr(0xA)));
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "a", i2ptr(0xA)));
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments_peak());
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(3, mem.get_fragments_peak());
         TEST_ASSERT(!wkv_is_empty(&wkv));
         TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
         // cleanup
-        TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_remove(&wkv, "a", '/'));
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_remove(&wkv, "a"));
         TEST_ASSERT(wkv_is_empty(&wkv));
         TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
@@ -239,16 +239,16 @@ void test_backtrack()
     {
         Memory mem(4); // top node A will be retained because it has a child.
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "a/b", i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(4, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(4, mem.get_fragments_peak());
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/c", '/', i2ptr(0xC)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/c", i2ptr(0xC)));
         TEST_ASSERT_EQUAL_size_t(4, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(4, mem.get_fragments_peak());
         TEST_ASSERT(!wkv_is_empty(&wkv));
         TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
         // cleanup
-        TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_remove(&wkv, "a/b", '/'));
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_remove(&wkv, "a/b"));
         TEST_ASSERT(wkv_is_empty(&wkv));
         TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());

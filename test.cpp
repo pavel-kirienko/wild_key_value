@@ -255,6 +255,61 @@ void test_backtrack()
     }
 }
 
+void test_gather_key()
+{
+    Memory mem(50);
+    wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "xx/a", i2ptr(0xA)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "xx//b", i2ptr(0xB)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "", i2ptr(0xC)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "/", i2ptr(0xD)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "e", i2ptr(0xE)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "/xx//f/", i2ptr(0xF)));
+
+    char buf[WKV_KEY_MAX_LEN + 1];
+
+    ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, 4, "xx/a");
+    TEST_ASSERT(n->value == i2ptr(0xA));
+    _wkv_gather_key(n, 4, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("xx/a", buf);
+
+    n = _wkv_get(&wkv, &wkv.root, 5, "xx//b");
+    TEST_ASSERT(n->value == i2ptr(0xB));
+    _wkv_gather_key(n, 5, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("xx//b", buf);
+
+    n = _wkv_get(&wkv, &wkv.root, 0, "");
+    TEST_ASSERT(n->value == i2ptr(0xC));
+    _wkv_gather_key(n, 0, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("", buf);
+
+    n = _wkv_get(&wkv, &wkv.root, 1, "/");
+    TEST_ASSERT(n->value == i2ptr(0xD));
+    _wkv_gather_key(n, 1, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("/", buf);
+
+    n = _wkv_get(&wkv, &wkv.root, 1, "e");
+    TEST_ASSERT(n->value == i2ptr(0xE));
+    _wkv_gather_key(n, 1, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("e", buf);
+
+    n = _wkv_get(&wkv, &wkv.root, 7, "/xx//f/");
+    TEST_ASSERT(n->value == i2ptr(0xF));
+    _wkv_gather_key(n, 7, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("/xx//f/", buf);
+
+    // cleanup
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_remove(&wkv, "xx/a"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_remove(&wkv, "xx//b"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_remove(&wkv, ""));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_remove(&wkv, "/"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_remove(&wkv, "e"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_remove(&wkv, "/xx//f/"));
+    TEST_ASSERT(wkv_is_empty(&wkv));
+    TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
+    TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
+}
+
 } // namespace
 
 int main(const int argc, const char* const argv[])
@@ -266,6 +321,7 @@ int main(const int argc, const char* const argv[])
     UNITY_BEGIN();
     RUN_TEST(test_basic);
     RUN_TEST(test_backtrack);
+    RUN_TEST(test_gather_key);
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)
 }

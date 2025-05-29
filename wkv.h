@@ -398,24 +398,24 @@ static inline void* wkv_remove(struct wkv_t* const self, const char* const key)
 // ==== FUNCTIONS BELOW ARE BROKEN FOR NOW ====
 
 /// Ascend the tree and copy the full key leading to the current node into the buffer.
-static inline void _wkv_gather_key(const struct wkv_node_t* const node,
-                                   const size_t                   key_len,
-                                   const char                     sep,
-                                   char* const                    buf)
+static inline void _wkv_gather_key(const struct wkv_node_t* node, const size_t key_len, const char sep, char* const buf)
 {
-    char* p                 = &buf[key_len];
-    *p                      = '\0';
-    struct wkv_edge_t* edge = (struct wkv_edge_t*)node;
-    while (edge->node.parent != NULL) {
-        WKV_ASSERT(edge->node.parent->n_edges > 0);
-        WKV_ASSERT(edge->seg_len < WKV_KEY_MAX_LEN);
-        if (p != &buf[key_len]) {
-            *p-- = sep;
+    WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
+    char* p    = &buf[key_len];
+    *p         = '\0';
+    bool first = true;
+    while (node->parent != NULL) {
+        WKV_ASSERT(node->parent->n_edges > 0);
+        if (!first) {
+            *--p = sep;
         }
+        first                               = false;
+        const struct wkv_edge_t* const edge = (const struct wkv_edge_t*)node;
+        WKV_ASSERT(edge->seg_len <= key_len);
         p -= edge->seg_len;
         WKV_ASSERT(p >= buf);
         memcpy(p, edge->seg, edge->seg_len);
-        edge = (struct wkv_edge_t*)edge->node.parent;
+        node = node->parent;
     }
     WKV_ASSERT(buf[key_len] == '\0');
     WKV_ASSERT(p == buf);

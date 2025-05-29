@@ -180,7 +180,7 @@ void test_backtrack()
         TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
     }
     {
-        Memory mem(3);
+        Memory mem(3); // top node A will be retained because it has a payload.
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "a", '/', i2ptr(0xA)));
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
@@ -188,6 +188,30 @@ void test_backtrack()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(3, mem.get_fragments_peak());
+        TEST_ASSERT(!wkv_is_empty(&wkv));
+        TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
+    }
+    {
+        Memory mem(4); // top node A will be retained because it has a payload.
+        wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "a", '/', i2ptr(0xA)));
+        TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
+        TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments_peak());
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
+        TEST_ASSERT_EQUAL_size_t(4, mem.get_fragments_peak());
+        TEST_ASSERT(!wkv_is_empty(&wkv));
+        TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
+    }
+    {
+        Memory mem(4); // top node A will be retained because it has a child.
+        wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "a/b", '/', i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
+        TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments_peak());
+        TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "a/c", '/', i2ptr(0xC)));
+        TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments());
+        TEST_ASSERT_EQUAL_size_t(4, mem.get_fragments_peak());
         TEST_ASSERT(!wkv_is_empty(&wkv));
         TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
     }

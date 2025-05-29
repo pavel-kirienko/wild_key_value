@@ -26,6 +26,7 @@
 // ReSharper disable CppRedundantElaboratedTypeSpecifier CppRedundantInlineSpecifier
 #pragma once
 
+// ReSharper disable once CppUnusedIncludeDirective
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -160,7 +161,7 @@ static inline void* wkv_match(struct wkv_t* const  self,
                               void* const          context,
                               const wkv_on_match_t on_match);
 
-static inline bool wkv_is_empty(struct wkv_t* const self)
+static inline bool wkv_is_empty(const struct wkv_t* const self)
 {
     WKV_ASSERT((self != NULL) && (self->root.value == NULL));
     return self->root.n_edges == 0;
@@ -227,10 +228,10 @@ static ptrdiff_t _wkv_bisect(const struct wkv_node_t* const node, const size_t s
 /// If the node is the root, then -1 is returned.
 static ptrdiff_t _wkv_locate_in_parent(struct wkv_node_t* const node)
 {
-    struct wkv_node_t* const parent = node->parent;
+    const struct wkv_node_t* const parent = node->parent;
     if (parent != NULL) {
-        struct wkv_edge_t* const edge = (struct wkv_edge_t*)node;
-        const ptrdiff_t          k    = _wkv_bisect(parent, edge->seg_len, edge->seg);
+        const struct wkv_edge_t* const edge = (struct wkv_edge_t*)node;
+        const ptrdiff_t                k    = _wkv_bisect(parent, edge->seg_len, edge->seg);
         WKV_ASSERT((k >= 0) && (k < (ptrdiff_t)parent->n_edges));
         WKV_ASSERT(parent->edges[k] == edge);
         return k;
@@ -375,7 +376,7 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
         WKV_ASSERT(false);
         return NULL;
     }
-    struct wkv_node_t* const node = _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN), key);
+    const struct wkv_node_t* const node = _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN), key);
     return (node != NULL) ? node->value : NULL;
 }
 
@@ -422,11 +423,11 @@ static inline void _wkv_gather_key(const struct wkv_node_t* node, const size_t k
     WKV_ASSERT(strlen(p) == key_len);
 }
 
-static inline void* _wkv_on_match_maybe(struct wkv_t* const      self,
-                                        const size_t             key_len,
-                                        void* const              context,
-                                        struct wkv_node_t* const node,
-                                        const wkv_on_match_t     on_match)
+static inline void* _wkv_on_match_maybe(struct wkv_t* const            self,
+                                        const size_t                   key_len,
+                                        void* const                    context,
+                                        const struct wkv_node_t* const node,
+                                        const wkv_on_match_t           on_match)
 {
     void* result = NULL;
     if (node->value != NULL) {
@@ -444,13 +445,13 @@ static inline void* _wkv_on_match_maybe(struct wkv_t* const      self,
     return result;
 }
 
-static inline void* _wkv_match(struct wkv_t* const      self,
-                               struct wkv_node_t* const node,
-                               const size_t             query_len,
-                               const char* const        query,
-                               const char               wild,
-                               void* const              context,
-                               const wkv_on_match_t     on_match)
+static inline void* _wkv_match(struct wkv_t* const            self,
+                               const struct wkv_node_t* const node,
+                               const size_t                   query_len,
+                               const char* const              query,
+                               const char                     wild,
+                               void* const                    context,
+                               const wkv_on_match_t           on_match)
 {
     const char* const slash   = (const char*)memchr(query, self->sep, query_len);
     const size_t      seg_len = (slash != NULL) ? (size_t)(slash - query) : query_len;
@@ -462,7 +463,7 @@ static inline void* _wkv_match(struct wkv_t* const      self,
             result = on_match(self, context, 0, "", node->value);
         }
         for (size_t k = 0; (k < node->n_edges) && (result == NULL); ++k) {
-            struct wkv_edge_t* const edge = node->edges[k];
+            const struct wkv_edge_t* const edge = node->edges[k];
             WKV_ASSERT(edge != NULL);
             WKV_ASSERT(edge->node.parent == node); // descend with the same last segment
             result = _wkv_match(self, &edge->node, query_len, query, wild, context, on_match);
@@ -474,7 +475,7 @@ static inline void* _wkv_match(struct wkv_t* const      self,
             }
         } else {
             for (size_t k = 0; (k < node->n_edges) && (result == NULL); ++k) {
-                struct wkv_edge_t* const edge = node->edges[k];
+                const struct wkv_edge_t* const edge = node->edges[k];
                 WKV_ASSERT(edge != NULL);
                 WKV_ASSERT(edge->node.parent == node);
                 result = _wkv_match(self, &edge->node, query_len - seg_len - 1, slash + 1, wild, context, on_match);
@@ -484,7 +485,7 @@ static inline void* _wkv_match(struct wkv_t* const      self,
         const ptrdiff_t k = _wkv_bisect(node, seg_len, query);
         if (k >= 0) {
             WKV_ASSERT((size_t)k < node->n_edges);
-            struct wkv_edge_t* const edge = node->edges[k];
+            const struct wkv_edge_t* const edge = node->edges[k];
             WKV_ASSERT(edge != NULL);
             WKV_ASSERT(edge->node.parent == node);
             if (is_last) {

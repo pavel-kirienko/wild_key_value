@@ -117,6 +117,8 @@ void test_basic()
 {
     Memory mem(50);
     wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
+
+    // Insert some keys and check the count.
     TEST_ASSERT(wkv_is_empty(&wkv));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "foo", '/', i2ptr(0xA)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "/foo/", '/', i2ptr(0xB)));
@@ -133,6 +135,23 @@ void test_basic()
     TEST_ASSERT(!wkv_is_empty(&wkv));
     print(&wkv.root);
     std::cout << "Fragments: " << mem.get_fragments() << ", OOMs: " << mem.get_oom_count() << std::endl;
+
+    // Get some keys.
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_get(&wkv, "foo", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_get(&wkv, "/foo/", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_get(&wkv, "//foo//", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_get(&wkv, "/foo/bar", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_get(&wkv, "/foo/bar/", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_get(&wkv, "/foo/bar/baz", '/'));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_get(&wkv, "", '/'));
+
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "nonexistent", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "foo/", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/foo", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//foo", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/foo//", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/nonexistent/", '/'));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//nonexistent//", '/'));
 }
 
 void test_backtrack()

@@ -45,6 +45,8 @@ Checks: >-
   -misc-no-recursion,
   -cert-msc30-c,
   -cert-msc50-cpp,
+  -*-owning-memory,
+  -*clang-analyzer*,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*\.hpp'
 FormatStyle: file

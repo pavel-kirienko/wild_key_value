@@ -64,7 +64,7 @@ struct wkv_node_t
 
 struct wkv_edge_t
 {
-    struct wkv_node_t next; ///< Base type.
+    struct wkv_node_t node; ///< Base type.
 
     /// This is a flex array; it may be shorter than this depending on the segment length.
     /// https://www.open-std.org/Jtc1/sc22/wg14/www/docs/dr_051.html
@@ -100,7 +100,7 @@ struct wkv_t
 };
 
 /// Use this to create a new Wild Key-Value instance. The context pointer can be set and mutated arbitrarily later.
-static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_t free)
+static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_t free, void* const context)
 {
     struct wkv_t out;
     memset(&out, 0, sizeof(struct wkv_t));
@@ -108,7 +108,7 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_
     out.root.payload = NULL;
     out.realloc      = realloc;
     out.free         = free;
-    out.context      = NULL;
+    out.context      = context;
     return out;
 }
 
@@ -121,7 +121,8 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload);
 
 /// Returns the payload of the removed key if it was found, NULL if it didn't exist.
-static inline void* wkv_remove(struct wkv_t* const self, const char* const key, const char sep);
+/// Accepts patterns, in which case all matching keys are removed and the payload of the last match is returned.
+static inline void* wkv_remove(struct wkv_t* const self, const char* const pat, const char sep);
 
 /// Find keys in the tree of keys that match the given wildcard pattern.
 /// The pattern doesn't actually have to be a pattern, it can be an ordinary key name as well.
@@ -160,9 +161,9 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const self, const char* co
     const size_t             len  = strnlen(str, WKV_KEY_MAX_LEN);
     struct wkv_edge_t* const edge = (struct wkv_edge_t*)self->realloc(self, NULL, sizeof(struct wkv_node_t) + len + 1U);
     if (edge != NULL) {
-        edge->next.n_edges = 0;
-        edge->next.edges   = NULL;
-        edge->next.payload = NULL;
+        edge->node.n_edges = 0;
+        edge->node.edges   = NULL;
+        edge->node.payload = NULL;
         memcpy(&edge->seg[0], str, len);
         edge->seg[len] = '\0';
     }
@@ -191,6 +192,11 @@ static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const char* const se
     return -(((ptrdiff_t)lo) + 1); // insertion point; +1 is to handle the case of zero index insertion
 }
 
+static inline void _wkv_backtrack(struct wkv_t* const self, const char* const key, const char sep)
+{
+    WKV_ASSERT((self != NULL) && (key != NULL) && (sep != '\0'));
+}
+
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
 {
     if ((self == NULL) || (key == NULL) || (sep == '\0') || (payload == NULL)) {
@@ -200,44 +206,55 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
     struct wkv_node_t* n = &self->root;
     const char*        p = key;
     for (;;) {
-        const char* const seg_end = (const char*)memchr(p, sep, WKV_KEY_MAX_LEN);
-        const size_t      len     = (seg_end != NULL) ? (size_t)(seg_end - p) : strnlen(p, WKV_KEY_MAX_LEN);
+        const size_t      p_len   = strnlen(p, WKV_KEY_MAX_LEN);
+        const char* const seg_end = (const char*)memchr(p, sep, p_len);
+        const size_t      len     = (seg_end != NULL) ? (size_t)(seg_end - p) : p_len;
 
         char segbuf[WKV_KEY_MAX_LEN + 1U];
         memcpy(segbuf, p, len);
         segbuf[len] = '\0';
-
         ptrdiff_t k = _wkv_bisect(n, segbuf);
         if (k < 0) { // Insort the new edge.
             k = -(k + 1);
             WKV_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
-            // Expand the edge pointer array and allocate the new edge. This may fail.
+            // Expand the edge pointer array and allocate the new edge. This may fail, which will require backtracking.
             struct wkv_edge_t* new_e = NULL;
             {
                 struct wkv_edge_t** const new_edges =
                   (struct wkv_edge_t**)self->realloc(self, n->edges, (n->n_edges + 1) * sizeof(struct wkv_edge_t*));
                 if (new_edges != NULL) {  // Even if we bail later, we keep this larger array allocated as-is.
-                    n->edges = new_edges; // It will be resized on next removal or insertion.
+                    n->edges = new_edges; // It will be resized on node removal or insertion.
                     new_e    = _wkv_edge_new(self, segbuf);
                 }
             }
-            WKV_ASSERT(n->edges != NULL);
             if (new_e == NULL) {
-                // TODO: handle allocation failure -- backtrack to remove the edges that we created so far.
-                // copy (key...p) into segbuf and invoke wkv_remove()?
+                if (p != key) { // otherwise, we haven't inserted anything yet
+                    const size_t prefix_len = (size_t)(p - key) + len;
+                    memcpy(segbuf, key, prefix_len);
+                    segbuf[prefix_len] = '\0';
+                    _wkv_backtrack(self, segbuf, sep);
+                    return NULL;
+                }
             } else {
+                WKV_ASSERT(n->edges != NULL);
                 memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
                 n->edges[k] = new_e;
                 n->n_edges++;
             }
         }
-        n = &n->edges[k]->next;
-        if (!seg_end) {
-            break; // last segment consumed
+        WKV_ASSERT(n->edges != NULL);
+        n = &n->edges[k]->node;
+        if (seg_end == NULL) {
+            break;
         }
         p = seg_end + 1;
     }
-    n->payload = payload;
+    WKV_ASSERT(n != NULL);
+    // Do not overwrite the payload if it is already set. The caller will detect this by checking the return value.
+    if (n->payload == NULL) {
+        n->payload = payload;
+    }
+    return n->payload;
 }
 
 #ifdef __cplusplus

@@ -1,10 +1,14 @@
-# Wildset
+# Wild Key-Value
 
-Very fast and scalable wildcard pattern matching with a nearly-static set of either keys or patterns.
+Very fast and very compact single-header C99 key-value container with wildcard key pattern matching.
 Suitable for embedded systems.
+
+Performs best when:
+
+- The key space is not altered often.
+- Keys are composed of short segments (less than ~16 bytes) separated by a user-defined segment separator character, 
+  which is normally `/`.
 
 ## Usage
 
-Copy `wildset.h` into your project, `#include <wildset.h>`.
-
-
+Copy `wkv.h` into your project, `#include <wkv.h>`.

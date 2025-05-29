@@ -1,6 +1,6 @@
 /// Copyright (c) Pavel Kirienko <pavel@opencyphal.org>
 
-#include "wildset.h"
+#include "wkv.h"
 #include <unity.h>
 #include <cstdio>
 #include <cstdlib>
@@ -14,8 +14,8 @@ namespace {
 
 void test_basic()
 {
-    const wildset_t ws{};
-    (void)ws;
+    const wkv_t wkv{};
+    (void)wkv;
 }
 
 } // namespace

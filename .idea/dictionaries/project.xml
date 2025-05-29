@@ -2,8 +2,11 @@
   <dictionary name="project">
     <words>
       <w>kirienko</w>
+      <w>nolintbegin</w>
+      <w>nolintend</w>
       <w>segbuf</w>
       <w>strdup</w>
+      <w>wildkv</w>
       <w>wildset</w>
     </words>
   </dictionary>

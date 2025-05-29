@@ -1,4 +1,4 @@
-/// Source: https://github.com/pavel-kirienko/wildset
+/// Source: https://github.com/pavel-kirienko/wild_key_value
 ///
 /// See also:
 ///
@@ -30,14 +30,14 @@
 #include <stddef.h>
 #include <string.h>
 
-/// If Wildset is used in throughput-critical code, then it is recommended to disable assertion checks as they may
-/// be costly in terms of execution time.
-#ifndef WILDSET_ASSERT
-#if defined(WILDSET_NO_ASSERT) && WILDSET_NO_ASSERT
-#define WILDSET_ASSERT(x) (void)0
+/// If Wild Key-Value is used in throughput-critical code, then it is recommended to disable assertion checks
+/// as they may be costly in terms of execution time.
+#ifndef WKV_ASSERT
+#if defined(WKV_NO_ASSERT) && WKV_NO_ASSERT
+#define WKV_ASSERT(x) (void)0
 #else
 #include <assert.h>
-#define WILDSET_ASSERT(x) assert(x)
+#define WKV_ASSERT(x) assert(x)
 #endif
 #endif
 
@@ -51,29 +51,29 @@ extern "C"
 // ----------------------------------------         PUBLIC API SECTION         ----------------------------------------
 
 /// This is used for safe string operations and to allocate temporary storage on the stack during insertion.
-#ifndef WILDSET_KEY_MAX_LEN
-#error "WILDSET_KEY_MAX_LEN must be defined as a positive integer value"
+#ifndef WKV_KEY_MAX_LEN
+#error "WKV_KEY_MAX_LEN must be defined as a positive integer value"
 #endif
 
-struct wildset_node_t
+struct wkv_node_t
 {
-    size_t                  n_edges;
-    struct wildset_edge_t** edges;   ///< Contiguous edge pointers ordered lexicographically for bisection.
-    void*                   payload; ///< NULL if this is not a full key.
+    size_t              n_edges;
+    struct wkv_edge_t** edges;   ///< Contiguous edge pointers ordered lexicographically for bisection.
+    void*               payload; ///< NULL if this is not a full key.
 };
 
-struct wildset_edge_t
+struct wkv_edge_t
 {
-    struct wildset_node_t next; ///< Base type.
+    struct wkv_node_t next; ///< Base type.
 
     /// This is a flex array; it may be shorter than this depending on the segment length.
     /// https://www.open-std.org/Jtc1/sc22/wg14/www/docs/dr_051.html
-    char seg[WILDSET_KEY_MAX_LEN + 1];
+    char seg[WKV_KEY_MAX_LEN + 1];
 };
 
-/// When a new entry is inserted, Wildset needs to allocate tree nodes in the dynamic memory.
+/// When a new entry is inserted, Wild Key-Value needs to allocate tree nodes in the dynamic memory.
 /// There are allocations of the following sizes:
-/// - sizeof(struct wildset_node_t) + strlen(key_segment) + 1
+/// - sizeof(struct wkv_node_t) + strlen(key_segment) + 1
 /// - n_edges * sizeof(pointer)
 ///
 /// Realloc is used to allocate new memory with the original pointer being NULL, and also to resize the edges pointer
@@ -82,26 +82,34 @@ struct wildset_edge_t
 /// reallocation must always succeed.
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
-typedef void* (*wildset_realloc_t)(struct wildset_t* self, void* ptr, size_t new_size);
-typedef void (*wildset_free_t)(struct wildset_t* self, void* ptr);
+typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
+typedef void (*wkv_free_t)(struct wkv_t* self, void* ptr);
 
 /// Invoked on every match while searching.
-typedef void (*wildset_on_match_t)(struct wildset_t* self, void* context, void* payload);
+/// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
+typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, void* payload);
 
-struct wildset_t
+struct wkv_t
 {
-    struct wildset_node_t root; ///< Base type.
+    struct wkv_node_t root; ///< Base type.
 
-    wildset_realloc_t realloc;
-    wildset_free_t    free;
+    wkv_realloc_t realloc;
+    wkv_free_t    free;
 
     void* context; ///< Can be assigned by the user code arbitrarily.
 };
 
-/// Use this to create a new Wildset instance. The context pointer can be set and mutated arbitrarily later.
-static inline struct wildset_t wildset_init(const wildset_realloc_t realloc, const wildset_free_t free)
+/// Use this to create a new Wild Key-Value instance. The context pointer can be set and mutated arbitrarily later.
+static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_t free)
 {
-    return (struct wildset_t){ .root = { .edges = NULL }, .realloc = realloc, .free = free };
+    struct wkv_t out;
+    memset(&out, 0, sizeof(struct wkv_t));
+    out.root.edges   = NULL;
+    out.root.payload = NULL;
+    out.realloc      = realloc;
+    out.free         = free;
+    out.context      = NULL;
+    return out;
 }
 
 /// None of the pointers are allowed to be NULL.
@@ -110,61 +118,67 @@ static inline struct wildset_t wildset_init(const wildset_realloc_t realloc, con
 /// - If this key is already known (not unique), the payload value of the existing key.
 /// - NULL if out of memory.
 /// Therefore, to check if the key is inserted successfully, compare the returned value against the original payload.
-static inline void* wildset_add(struct wildset_t* const self, const char* const key, const char sep, void* const payload);
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload);
 
-/// Returns true if the key was removed, false if it didn't exist.
-static inline bool wildset_remove(struct wildset_t* const self, const char* const key, const char sep);
+/// Returns the payload of the removed key if it was found, NULL if it didn't exist.
+static inline void* wkv_remove(struct wkv_t* const self, const char* const key, const char sep);
 
 /// Find keys in the tree of keys that match the given wildcard pattern.
 /// The pattern doesn't actually have to be a pattern, it can be an ordinary key name as well.
-static inline void wildset_find_keys(struct wildset_t* const  self,
-                                     const char* const        pat,
-                                     const char               star,
-                                     void* const              context,
-                                     const wildset_on_match_t on_match);
+/// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
+/// If no matches are found or on_match returns NULL for all matches, then NULL is returned.
+static inline void* wkv_find_keys(struct wkv_t* const  self,
+                                  const char* const    pat,
+                                  const char           star,
+                                  void* const          context,
+                                  const wkv_on_match_t on_match);
 
 /// Find wildcard patterns in the tree of patterns that match the given key.
-static inline void wildset_find_pats(struct wildset_t* const  self,
-                                     const char* const        key,
-                                     const char               star,
-                                     void* const              context,
-                                     const wildset_on_match_t on_match);
+/// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
+/// If no matches are found or on_match returns NULL for all matches, then NULL is returned.
+static inline void* wkv_find_pats(struct wkv_t* const  self,
+                                  const char* const    key,
+                                  const char           star,
+                                  void* const          context,
+                                  const wkv_on_match_t on_match);
 
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
 
-static inline void _wildset_free(struct wildset_t* const self, void* const ptr)
+static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 {
-    WILDSET_ASSERT(self != NULL);
+    WKV_ASSERT(self != NULL);
     if (ptr != NULL) {
         self->free(self, ptr);
     }
 }
 
 /// Allocates the edge and its key segment in the same dynamically-sized memory block.
-static struct wildset_edge_t* _wildset_edge_new(struct wildset_t* const self, const char* const str)
+static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const self, const char* const str)
 {
-    WILDSET_ASSERT(str != NULL);
-    const size_t                 len = strnlen(str, WILDSET_KEY_MAX_LEN);
-    struct wildset_edge_t* const edge =
-      (struct wildset_edge_t*)self->realloc(self, NULL, sizeof(struct wildset_node_t) + len + 1U);
+    WKV_ASSERT(str != NULL);
+    const size_t             len  = strnlen(str, WKV_KEY_MAX_LEN);
+    struct wkv_edge_t* const edge = (struct wkv_edge_t*)self->realloc(self, NULL, sizeof(struct wkv_node_t) + len + 1U);
     if (edge != NULL) {
-        edge->next = (struct wildset_node_t){ .n_edges = 0, .edges = NULL, .payload = NULL };
+        edge->next.n_edges = 0;
+        edge->next.edges   = NULL;
+        edge->next.payload = NULL;
         memcpy(&edge->seg[0], str, len);
         edge->seg[len] = '\0';
     }
     return edge;
 }
 
-/// Binary search inside n->edge (which we keep sorted). Returns insertion point if the segment is not found.
-static ptrdiff_t _wildset_bisect(struct wildset_node_t* const node, const char* const seg)
+/// Binary search inside n->edge (which we keep sorted).
+/// Returns negated (insertion point plus one) if the segment is not found.
+static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const char* const seg)
 {
-    WILDSET_ASSERT((node != NULL) && (seg != NULL));
+    WKV_ASSERT((node != NULL) && (seg != NULL));
     size_t lo = 0;
     size_t hi = node->n_edges;
     while (lo < hi) {
         const size_t mid = (lo + hi) / 2U;
-        const int    cmp = strncmp(seg, node->edges[mid]->seg, WILDSET_KEY_MAX_LEN);
+        const int    cmp = strncmp(seg, node->edges[mid]->seg, WKV_KEY_MAX_LEN);
         if (cmp == 0) {
             return (ptrdiff_t)mid;
         }
@@ -174,45 +188,45 @@ static ptrdiff_t _wildset_bisect(struct wildset_node_t* const node, const char* 
             lo = mid + 1;
         }
     }
-    return -(((ptrdiff_t)lo) + 1); // insertion point
+    return -(((ptrdiff_t)lo) + 1); // insertion point; +1 is to handle the case of zero index insertion
 }
 
-static inline void* wildset_add(struct wildset_t* const self, const char* const key, const char sep, void* const payload)
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
 {
     if ((self == NULL) || (key == NULL) || (sep == '\0') || (payload == NULL)) {
-        WILDSET_ASSERT(false);
+        WKV_ASSERT(false);
         return NULL;
     }
-    struct wildset_node_t* n = &self->root;
-    const char*            p = key;
+    struct wkv_node_t* n = &self->root;
+    const char*        p = key;
     for (;;) {
-        const char* const seg_end = (const char*)memchr(p, sep, WILDSET_KEY_MAX_LEN);
-        const size_t      len     = (seg_end != NULL) ? (size_t)(seg_end - p) : strnlen(p, WILDSET_KEY_MAX_LEN);
+        const char* const seg_end = (const char*)memchr(p, sep, WKV_KEY_MAX_LEN);
+        const size_t      len     = (seg_end != NULL) ? (size_t)(seg_end - p) : strnlen(p, WKV_KEY_MAX_LEN);
 
-        char segbuf[WILDSET_KEY_MAX_LEN + 1U];
+        char segbuf[WKV_KEY_MAX_LEN + 1U];
         memcpy(segbuf, p, len);
         segbuf[len] = '\0';
 
-        ptrdiff_t k = _wildset_bisect(n, segbuf);
+        ptrdiff_t k = _wkv_bisect(n, segbuf);
         if (k < 0) { // Insort the new edge.
             k = -(k + 1);
-            WILDSET_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
+            WKV_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
             // Expand the edge pointer array and allocate the new edge. This may fail.
-            struct wildset_edge_t* new_e = NULL;
+            struct wkv_edge_t* new_e = NULL;
             {
-                struct wildset_edge_t** const new_edges = (struct wildset_edge_t**)self->realloc(
-                  self, n->edges, (n->n_edges + 1) * sizeof(struct wildset_edge_t*));
+                struct wkv_edge_t** const new_edges =
+                  (struct wkv_edge_t**)self->realloc(self, n->edges, (n->n_edges + 1) * sizeof(struct wkv_edge_t*));
                 if (new_edges != NULL) {  // Even if we bail later, we keep this larger array allocated as-is.
                     n->edges = new_edges; // It will be resized on next removal or insertion.
-                    new_e    = _wildset_edge_new(self, segbuf);
+                    new_e    = _wkv_edge_new(self, segbuf);
                 }
             }
-            WILDSET_ASSERT(n->edges != NULL);
+            WKV_ASSERT(n->edges != NULL);
             if (new_e == NULL) {
                 // TODO: handle allocation failure -- backtrack to remove the edges that we created so far.
-                // copy (key...p) into segbuf and invoke wildset_remove()?
+                // copy (key...p) into segbuf and invoke wkv_remove()?
             } else {
-                memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - k) * sizeof(struct wildset_edge_t*));
+                memmove(&n->edges[k + 1], &n->edges[k], (n->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
                 n->edges[k] = new_e;
                 n->n_edges++;
             }

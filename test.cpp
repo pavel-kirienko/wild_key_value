@@ -265,6 +265,7 @@ void test_gather_key()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "/", i2ptr(0xD)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "e", i2ptr(0xE)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "/xx//f/", i2ptr(0xF)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_add(&wkv, "//", i2ptr(0x1)));
 
     char buf[WKV_KEY_MAX_LEN + 1];
 
@@ -298,6 +299,11 @@ void test_gather_key()
     _wkv_gather_key(n, 7, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/xx//f/", buf);
 
+    n = _wkv_get(&wkv, &wkv.root, 2, "//");
+    TEST_ASSERT(n->value == i2ptr(0x1));
+    _wkv_gather_key(n, 2, wkv.sep, buf);
+    TEST_ASSERT_EQUAL_STRING("//", buf);
+
     // cleanup
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_remove(&wkv, "xx/a"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_remove(&wkv, "xx//b"));
@@ -305,6 +311,7 @@ void test_gather_key()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_remove(&wkv, "/"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_remove(&wkv, "e"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_remove(&wkv, "/xx//f/"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_remove(&wkv, "//"));
     TEST_ASSERT(wkv_is_empty(&wkv));
     TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());

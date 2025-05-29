@@ -50,18 +50,17 @@ extern "C"
 
 // ----------------------------------------         PUBLIC API SECTION         ----------------------------------------
 
-/// This is used only for safe string operations. Does not affect the memory footprint.
 #ifndef WKV_KEY_MAX_LEN
-#define WKV_KEY_MAX_LEN (1024U * 1024U)
+#define WKV_KEY_MAX_LEN 1024U
 #endif
 
-/// A fundamental invariant of WKV is that every node has EITHER a payload or outgoing edges.
+/// A fundamental invariant of WKV is that every node has EITHER a value or outgoing edges.
 struct wkv_node_t
 {
     struct wkv_node_t*  parent; ///< NULL if this is the root node.
     size_t              n_edges;
-    struct wkv_edge_t** edges;   ///< Contiguous edge pointers ordered lexicographically for bisection.
-    void*               payload; ///< NULL if this is not a full key.
+    struct wkv_edge_t** edges; ///< Contiguous edge pointers ordered lexicographically for bisection.
+    void*               value; ///< NULL if this is not a full key.
 };
 
 struct wkv_edge_t
@@ -91,9 +90,11 @@ struct wkv_edge_t
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
 
-/// Invoked on every wildcard match while searching. The payload is guaranteed to be non-NULL.
+/// Invoked on every wildcard match while searching. The value is guaranteed to be non-NULL.
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
-typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, size_t key_len, const char* key, void* payload);
+/// The full key of the found match will be constructed on stack ad-hoc, so the lifetime of the key pointer
+/// will end upon return from this function, but the value will obviously remain valid as long as the entry exists.
+typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, size_t key_len, const char* key, void* value);
 
 /// Once initialized, the instance shall not be moved or copied, as that breaks parent links in the tree.
 /// Hint: pointer to a node with parent=NULL is the pointer to wkv_t of the current tree.
@@ -109,35 +110,35 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const con
 {
     struct wkv_t out;
     memset(&out, 0, sizeof(struct wkv_t));
-    out.root.parent  = NULL;
-    out.root.edges   = NULL;
-    out.root.payload = NULL;
-    out.realloc      = realloc;
-    out.context      = context;
+    out.root.parent = NULL;
+    out.root.edges  = NULL;
+    out.root.value  = NULL;
+    out.realloc     = realloc;
+    out.context     = context;
     return out;
 }
 
 /// Repeated separators are acceptable. None of the pointers are allowed to be NULL.
 /// Returns:
-/// - Payload as-is on success.
-/// - If this key is already known (not unique), the payload value of the existing key.
+/// - Value as-is on success.
+/// - If this key is already known (not unique), the value of the existing key.
 /// - NULL if out of memory.
-/// Therefore, to check if the key is inserted successfully, compare the returned value against the original payload.
-static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload);
+/// Therefore, to check if the key is inserted successfully, compare the returned value against the original value.
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const value);
 
-/// This is like wkv_add, but it overwrites the existing payload if the key already exists.
+/// This is like wkv_add, but it overwrites the existing value if the key already exists.
 /// Returns:
-/// - Payload as-is on success.
+/// - Value as-is on success.
 /// - NULL if out of memory.
-static inline void* wkv_set(struct wkv_t* const self, const char* const key, const char sep, void* const payload);
+static inline void* wkv_set(struct wkv_t* const self, const char* const key, const char sep, void* const value);
 
 /// Find a key using literal matching, without wildcards. Every character in the key is treated verbatim.
 /// NULL if no such key exists.
 static inline void* wkv_get(const struct wkv_t* const self, const char* const key, const char sep);
 
-/// Returns the payload of the removed key if it was found, NULL if it didn't exist.
-/// Accepts patterns, in which case all matching keys are removed and the payload of the last match is returned.
-static inline void* wkv_remove(struct wkv_t* const self, const char* const pat, const char sep);
+/// Removes the key using literal matching, without wildcards. Every character in the key is treated verbatim.
+/// Returns the value of the removed key if it was found, NULL if it didn't exist.
+static inline void* wkv_remove(struct wkv_t* const self, const char* const key, const char sep);
 
 /// Matching elements are reported in the lexicographic order of their keys.
 /// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
@@ -151,7 +152,7 @@ static inline void* wkv_find(struct wkv_t* const  self,
 
 static inline bool wkv_is_empty(struct wkv_t* const self)
 {
-    WKV_ASSERT((self != NULL) && (self->root.payload == NULL));
+    WKV_ASSERT((self != NULL) && (self->root.value == NULL));
     return self->root.n_edges == 0;
 }
 
@@ -179,7 +180,7 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
         edge->node.parent  = parent;
         edge->node.n_edges = 0;
         edge->node.edges   = NULL;
-        edge->node.payload = NULL;
+        edge->node.value   = NULL;
         edge->seg_len      = seg_len;
         memcpy(&edge->seg[0], seg, seg_len);
         edge->seg[seg_len] = '\0';
@@ -244,21 +245,23 @@ static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t
 {
     WKV_ASSERT((self != NULL) && (node != NULL));
     _wkv_shrink(self, node);
-    const ptrdiff_t k = _wkv_locate_in_parent(node);
-    if ((k >= 0) && (node->n_edges == 0) && (node->payload == NULL)) {
-        struct wkv_node_t* const p = node->parent;
-        WKV_ASSERT(p != NULL);
-        // Remove the edge from the parent's edge array. It will be shrunk in the next recursion level.
-        p->n_edges--;
-        memmove(&p->edges[k], &p->edges[k + 1], (p->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
-        // Free the edge and its segment. We use the node pointer which is the same as the edge pointer.
-        _wkv_free(self, node->edges); // This is probably NULL bc empty, but we don't enforce this.
-        _wkv_free(self, node);
-        // Removing the node from the parent may have caused the parent to become eligible for garbage collection.
-        _wkv_prune_branch(self, p);
+    if ((node->n_edges == 0) && (node->value == NULL)) {
+        const ptrdiff_t k = _wkv_locate_in_parent(node);
+        if (k >= 0) {
+            struct wkv_node_t* const p = node->parent;
+            WKV_ASSERT(p != NULL);
+            // Remove the edge from the parent's edge array. It will be shrunk in the next recursion level.
+            p->n_edges--;
+            memmove(&p->edges[k], &p->edges[k + 1], (p->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
+            // Free the edge and its segment. We use the node pointer which is the same as the edge pointer.
+            _wkv_free(self, node->edges); // This is probably NULL bc empty, but we don't enforce this.
+            _wkv_free(self, node);
+            // Removing the node from the parent may have caused the parent to become eligible for garbage collection.
+            _wkv_prune_branch(self, p);
+        }
+        // If the node is not eligible for garbage collection, then all its parents are not eligible either,
+        // which means there is nothing left to do.
     }
-    // If the node is not eligible for garbage collection, then all its parents are not eligible either,
-    // which means there is nothing left to do.
 }
 
 static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self,
@@ -313,46 +316,46 @@ static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self,
     return n;
 }
 
-static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const value)
 {
     struct wkv_node_t* const n = _wkv_insert(self, strnlen(key, WKV_KEY_MAX_LEN), key, sep);
     if (n != NULL) {
-        if (n->payload == NULL) {
-            n->payload = payload; // Assign the payload only if this is a new key.
+        if (n->value == NULL) {
+            n->value = value; // Assign the value only if this is a new key.
         }
-        return n->payload;
+        return n->value;
     }
     return NULL;
 }
 
-static inline void* wkv_set(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
+static inline void* wkv_set(struct wkv_t* const self, const char* const key, const char sep, void* const value)
 {
     struct wkv_node_t* const n = _wkv_insert(self, strnlen(key, WKV_KEY_MAX_LEN), key, sep);
     if (n != NULL) {
-        n->payload = payload; // Assign the payload regardless of whether this is a new key or not.
-        return n->payload;
+        n->value = value; // Assign the value regardless of whether this is a new key or not.
+        return n->value;
     }
     return NULL;
 }
 
-static inline void* _wkv_get(const struct wkv_t* const      self,
-                             const struct wkv_node_t* const node,
-                             const size_t                   key_len,
-                             const char* const              key,
-                             const char                     sep)
+static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
+                                          const struct wkv_node_t* const node,
+                                          const size_t                   key_len,
+                                          const char* const              key,
+                                          const char                     sep)
 {
-    const char* const slash   = (const char*)memchr(key, sep, key_len);
-    const size_t      seg_len = (slash != NULL) ? (size_t)(slash - key) : key_len;
-    const bool        is_last = (slash == NULL);
-    void*             result  = NULL;
-    const ptrdiff_t   k       = _wkv_bisect(node, seg_len, key);
+    const char* const  slash   = (const char*)memchr(key, sep, key_len);
+    const size_t       seg_len = (slash != NULL) ? (size_t)(slash - key) : key_len;
+    const bool         is_last = (slash == NULL);
+    struct wkv_node_t* result  = NULL;
+    const ptrdiff_t    k       = _wkv_bisect(node, seg_len, key);
     if (k >= 0) {
         WKV_ASSERT((size_t)k < node->n_edges);
         struct wkv_edge_t* const edge = node->edges[k];
         WKV_ASSERT(edge != NULL);
         WKV_ASSERT(edge->node.parent == node);
         if (is_last) {
-            result = edge->node.payload; // found the node but it may be empty if no key was explicitly added here
+            result = &edge->node;
         } else {
             result = _wkv_get(self, &edge->node, key_len - seg_len - 1, slash + 1, sep);
         }
@@ -366,10 +369,75 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
         WKV_ASSERT(false);
         return NULL;
     }
-    return _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN), key, sep);
+    struct wkv_node_t* const node = _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN), key, sep);
+    return (node != NULL) ? node->value : NULL;
+}
+
+static inline void* wkv_remove(struct wkv_t* const self, const char* const key, const char sep)
+{
+    if ((self == NULL) || (key == NULL) || (sep == '\0')) {
+        WKV_ASSERT(false);
+        return NULL;
+    }
+    void*                    value = NULL;
+    struct wkv_node_t* const node  = _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN), key, sep);
+    if (node != NULL) {
+        value       = node->value;
+        node->value = NULL;
+        _wkv_prune_branch(self, node);
+    }
+    return value;
 }
 
 // ==== FUNCTIONS BELOW ARE BROKEN FOR NOW ====
+
+/// Ascend the tree and copy the full key leading to the current node into the buffer.
+static inline void _wkv_gather_key(const struct wkv_node_t* const node,
+                                   const size_t                   key_len,
+                                   const char                     sep,
+                                   char* const                    buf)
+{
+    char* p                 = &buf[key_len];
+    *p                      = '\0';
+    struct wkv_edge_t* edge = (struct wkv_edge_t*)node;
+    while (edge->node.parent != NULL) {
+        WKV_ASSERT(edge->node.parent->n_edges > 0);
+        WKV_ASSERT(edge->seg_len < WKV_KEY_MAX_LEN);
+        if (p != &buf[key_len]) {
+            *p-- = sep;
+        }
+        p -= edge->seg_len;
+        WKV_ASSERT(p >= buf);
+        memcpy(p, edge->seg, edge->seg_len);
+        edge = (struct wkv_edge_t*)edge->node.parent;
+    }
+    WKV_ASSERT(buf[key_len] == '\0');
+    WKV_ASSERT(p == buf);
+    WKV_ASSERT(strlen(p) == key_len);
+}
+
+static inline void* _wkv_match(struct wkv_t* const      self,
+                               const size_t             key_len,
+                               const char               sep,
+                               void* const              context,
+                               struct wkv_node_t* const node,
+                               const wkv_on_match_t     on_match)
+{
+    WKV_ASSERT(key_len < WKV_KEY_MAX_LEN);
+    void* result = NULL;
+    if (node->value != NULL) {
+        char buf[1 +
+#ifdef __cplusplus
+                 WKV_KEY_MAX_LEN
+#else
+                 key_len
+#endif
+        ];
+        _wkv_gather_key(node, key_len, sep, buf);
+        result = on_match(self, context, key_len, buf, node->value);
+    }
+    return result;
+}
 
 static inline void* _wkv_find(struct wkv_t* const      self,
                               struct wkv_node_t* const node,
@@ -386,8 +454,8 @@ static inline void* _wkv_find(struct wkv_t* const      self,
     void*             result  = NULL;
     if (is_last && (seg_len == 2) && (query[0] == wild) && (query[1] == wild)) {
         // Recursive wildcard placed at the end matches everything down the tree.
-        if (node->payload != NULL) {
-            result = on_match(self, context, 0, "", node->payload);
+        if (node->value != NULL) {
+            result = on_match(self, context, 0, "", node->value);
         }
         for (size_t k = 0; (k < node->n_edges) && (result == NULL); ++k) {
             struct wkv_edge_t* const edge = node->edges[k];
@@ -397,8 +465,8 @@ static inline void* _wkv_find(struct wkv_t* const      self,
         }
     } else if ((seg_len == 1) && (query[0] == wild)) {
         if (is_last) {
-            if (node->payload != NULL) {
-                result = on_match(self, context, 0, "", node->payload);
+            if (node->value != NULL) {
+                result = on_match(self, context, 0, "", node->value);
             }
         } else {
             for (size_t k = 0; (k < node->n_edges) && (result == NULL); ++k) {
@@ -416,8 +484,8 @@ static inline void* _wkv_find(struct wkv_t* const      self,
             WKV_ASSERT(edge != NULL);
             WKV_ASSERT(edge->node.parent == node);
             if (is_last) {
-                if (edge->node.payload != NULL) {
-                    result = on_match(self, context, 0, "", edge->node.payload);
+                if (edge->node.value != NULL) {
+                    result = on_match(self, context, 0, "", edge->node.value);
                 }
             } else {
                 result = _wkv_find(self, &edge->node, query_len - seg_len - 1, slash + 1, sep, wild, context, on_match);

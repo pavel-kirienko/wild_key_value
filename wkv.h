@@ -160,6 +160,12 @@ static inline struct wkv_t* wkv_get_self(struct wkv_node_t* node)
     return (struct wkv_t*)node;
 }
 
+static inline bool wkv_is_empty(struct wkv_t* const self)
+{
+    WKV_ASSERT((self != NULL) && (self->root.payload == NULL));
+    return self->root.n_edges == 0;
+}
+
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
 
@@ -232,27 +238,35 @@ static ptrdiff_t _wkv_locate_in_parent(struct wkv_node_t* const node)
     return -1; // The root node has no parent.
 }
 
-/// Starting from a leaf node, go up the tree and remove all nodes whose trace does not eventually lead to a full key.
-/// This is intended for aborting insertions when we run out of memory and have to backtrack.
-static inline void _wkv_trim(struct wkv_t* const self, struct wkv_node_t* const node)
+/// Downsize the edges pointer array of the node to the current number of edges.
+/// Infallible because we require that realloc always succeeds when the size is non-increased.
+static inline void _wkv_shrink(struct wkv_t* const self, struct wkv_node_t* const node)
 {
     WKV_ASSERT((self != NULL) && (node != NULL));
+    if (node->edges != NULL) {
+        node->edges = (struct wkv_edge_t**)self->realloc(self, node->edges, node->n_edges * sizeof(struct wkv_edge_t*));
+        WKV_ASSERT((node->edges != NULL) || (node->n_edges == 0));
+    }
+}
+
+/// Starting from a leaf node, go up the tree and remove all nodes whose trace does not eventually lead to a full key.
+/// This is intended for aborting insertions when we run out of memory and have to backtrack.
+static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t* const node)
+{
+    WKV_ASSERT((self != NULL) && (node != NULL));
+    _wkv_shrink(self, node);
     const ptrdiff_t k = _wkv_locate_in_parent(node);
     if ((k >= 0) && (node->n_edges == 0) && (node->payload == NULL)) {
         struct wkv_node_t* const p = node->parent;
         WKV_ASSERT(p != NULL);
-        // Remove the edge from the parent's edge array.
-        memmove(&p->edges[k], &p->edges[k + 1], (p->n_edges - (size_t)k - 1) * sizeof(struct wkv_edge_t*));
+        // Remove the edge from the parent's edge array. It will be shrunk in the next recursion level.
         p->n_edges--;
-        // This is optional but we want to be very frugal with memory, so we shrink the edges pointer array right away.
-        // We require that realloc always succeeds when the size is reduced.
-        p->edges = (struct wkv_edge_t**)self->realloc(self, p->edges, p->n_edges * sizeof(struct wkv_edge_t*));
-        WKV_ASSERT((p->edges != NULL) || (p->n_edges == 0));
+        memmove(&p->edges[k], &p->edges[k + 1], (p->n_edges - (size_t)k) * sizeof(struct wkv_edge_t*));
         // Free the edge and its segment. We use the node pointer which is the same as the edge pointer.
         _wkv_free(self, node->edges); // This is probably NULL bc empty, but we don't enforce this.
         _wkv_free(self, node);
         // Removing the node from the parent may have caused the parent to become eligible for garbage collection.
-        _wkv_trim(self, p);
+        _wkv_prune_branch(self, p);
     }
     // If the node is not eligible for garbage collection, then all its parents are not eligible either,
     // which means there is nothing left to do.
@@ -280,13 +294,13 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
             {
                 struct wkv_edge_t** const new_edges =
                   (struct wkv_edge_t**)self->realloc(self, n->edges, (n->n_edges + 1) * sizeof(struct wkv_edge_t*));
-                if (new_edges != NULL) {  // Even if we bail later, we keep this larger array allocated as-is.
-                    n->edges = new_edges; // It will be resized on node removal or insertion.
+                if (new_edges != NULL) {
+                    n->edges = new_edges; // Will be shrunk later if necessary.
                     new_e    = _wkv_edge_new(self, n, seg_len, seg);
                 }
             }
             if (NULL == new_e) {
-                _wkv_trim(self, n); // We may have inserted transient nodes that are now garbage. Clean them up.
+                _wkv_prune_branch(self, n); // We may have inserted transient nodes that are now garbage. Clean them up.
                 return NULL;
             }
             WKV_ASSERT(n->edges != NULL);

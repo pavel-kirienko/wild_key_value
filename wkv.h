@@ -133,7 +133,7 @@ static inline void* wkv_set(struct wkv_t* const self, const char* const key, con
 
 /// Find a key using literal matching, without wildcards. Every character in the key is treated verbatim.
 /// NULL if no such key exists.
-static inline void* wkv_get(struct wkv_t* const self, const char* const key, const char sep);
+static inline void* wkv_get(const struct wkv_t* const self, const char* const key, const char sep);
 
 /// Returns the payload of the removed key if it was found, NULL if it didn't exist.
 /// Accepts patterns, in which case all matching keys are removed and the payload of the last match is returned.
@@ -189,7 +189,7 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
 
 /// Binary search inside n->edge (which we keep sorted).
 /// Returns negated (insertion point plus one) if the segment is not found.
-static ptrdiff_t _wkv_bisect(struct wkv_node_t* const node, const size_t seg_len, const char* const seg)
+static ptrdiff_t _wkv_bisect(const struct wkv_node_t* const node, const size_t seg_len, const char* const seg)
 {
     WKV_ASSERT((node != NULL) && (seg != NULL));
     size_t lo = 0;
@@ -335,11 +335,11 @@ static inline void* wkv_set(struct wkv_t* const self, const char* const key, con
     return NULL;
 }
 
-static inline void* _wkv_get(struct wkv_t* const      self,
-                             struct wkv_node_t* const node,
-                             const size_t             key_len,
-                             const char* const        key,
-                             const char               sep)
+static inline void* _wkv_get(const struct wkv_t* const      self,
+                             const struct wkv_node_t* const node,
+                             const size_t                   key_len,
+                             const char* const              key,
+                             const char                     sep)
 {
     const char* const slash   = (const char*)memchr(key, sep, key_len);
     const size_t      seg_len = (slash != NULL) ? (size_t)(slash - key) : key_len;
@@ -360,7 +360,7 @@ static inline void* _wkv_get(struct wkv_t* const      self,
     return result;
 }
 
-static inline void* wkv_get(struct wkv_t* const self, const char* const key, const char sep)
+static inline void* wkv_get(const struct wkv_t* const self, const char* const key, const char sep)
 {
     if ((self == NULL) || (key == NULL) || (sep == '\0')) {
         WKV_ASSERT(false);

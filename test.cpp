@@ -123,9 +123,12 @@ void test_basic()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "//foo//", '/', i2ptr(0xC)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "/foo/bar", '/', i2ptr(0xD)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(0xE)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(1))); // conflict, ignored
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "/foo/bar/baz", '/', i2ptr(0xF)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_add(&wkv, "", '/', i2ptr(0x10)));
+    TEST_ASSERT_EQUAL_size_t(7, count(&wkv));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(1))); // conflict, ignored
+    TEST_ASSERT_EQUAL_size_t(7, count(&wkv));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(1), wkv_set(&wkv, "/foo/bar/", '/', i2ptr(1))); // conflict, overwritten
     TEST_ASSERT_EQUAL_size_t(7, count(&wkv));
     TEST_ASSERT(!wkv_is_empty(&wkv));
     print(&wkv.root);

@@ -117,14 +117,19 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const con
     return out;
 }
 
-/// Repeated separators are acceptable.
-/// None of the pointers are allowed to be NULL.
+/// Repeated separators are acceptable. None of the pointers are allowed to be NULL.
 /// Returns:
 /// - Payload as-is on success.
 /// - If this key is already known (not unique), the payload value of the existing key.
 /// - NULL if out of memory.
 /// Therefore, to check if the key is inserted successfully, compare the returned value against the original payload.
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload);
+
+/// This is like wkv_add, but it overwrites the existing payload if the key already exists.
+/// Returns:
+/// - Payload as-is on success.
+/// - NULL if out of memory.
+static inline void* wkv_set(struct wkv_t* const self, const char* const key, const char sep, void* const payload);
 
 /// Returns the payload of the removed key if it was found, NULL if it didn't exist.
 /// Accepts patterns, in which case all matching keys are removed and the payload of the last match is returned.
@@ -272,9 +277,9 @@ static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t
     // which means there is nothing left to do.
 }
 
-static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
+static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, const char* const key, const char sep)
 {
-    if ((self == NULL) || (key == NULL) || (sep == '\0') || (payload == NULL)) {
+    if ((self == NULL) || (key == NULL) || (sep == '\0')) {
         WKV_ASSERT(false);
         return NULL;
     }
@@ -319,11 +324,29 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, con
         remaining_len -= seg_len + 1;
     }
     WKV_ASSERT(n != NULL);
-    // Do not overwrite the payload if it is already set. The caller will detect this by checking the return value.
-    if (n->payload == NULL) {
-        n->payload = payload;
+    return n;
+}
+
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
+{
+    struct wkv_node_t* const n = _wkv_insert(self, key, sep);
+    if (n != NULL) {
+        if (n->payload == NULL) {
+            n->payload = payload; // Assign the payload only if this is a new key.
+        }
+        return n->payload;
     }
-    return n->payload;
+    return NULL;
+}
+
+static inline void* wkv_set(struct wkv_t* const self, const char* const key, const char sep, void* const payload)
+{
+    struct wkv_node_t* const n = _wkv_insert(self, key, sep);
+    if (n != NULL) {
+        n->payload = payload; // Assign the payload regardless of whether this is a new key or not.
+        return n->payload;
+    }
+    return NULL;
 }
 
 #ifdef __cplusplus

@@ -269,7 +269,7 @@ void test_gather_key()
 
     char buf[WKV_KEY_MAX_LEN + 1];
 
-    ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, 4, "xx/a");
+    const ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, 4, "xx/a");
     TEST_ASSERT(n->value == i2ptr(0xA));
     _wkv_gather_key(n, 4, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx/a", buf);

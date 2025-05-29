@@ -94,11 +94,31 @@ struct wkv_edge_t
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
 
+struct wkv_match_t
+{
+    /// Full reconstructed key. Lifetime ends upon return from the match callback.
+    size_t      key_len;
+    const char* key;
+
+    /// Substitutions that matched the corresponding wildcards in the query.
+    /// E.g., "/abc/123/def/foo/456" matching "/abc/*/def/**" produces "123" and "foo/456".
+    size_t       substitution_count;
+    const char** substitutions;
+
+    /// The value associated with the key that matched the query.
+    void* value;
+};
+
 /// Invoked on every wildcard match while searching. The value is guaranteed to be non-NULL.
+///
+/// Accepts not only the value but also the full key that matched the query.
+/// TODO: pass substitutions that matched the wildcards in the query:
+/// "/abc/123/def/foo/456" matching "/abc/*/def/**" produces "123" and "foo/456".
+///
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
 /// The full key of the found match will be constructed on stack ad-hoc, so the lifetime of the key pointer
 /// will end upon return from this function, but the value will obviously remain valid as long as the entry exists.
-typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, size_t key_len, const char* key, void* value);
+typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, struct wkv_match_t match);
 
 /// Once initialized, the instance shall not be moved or copied, as that breaks parent links in the tree.
 /// Hint: pointer to a node with parent=NULL is the pointer to wkv_t of the current tree.
@@ -437,7 +457,13 @@ static inline void* _wkv_on_match_maybe(struct wkv_t* const            self,
 #endif
         ];
         _wkv_gather_key(node, key_len, self->sep, buf);
-        result = on_match(self, context, key_len, buf, node->value);
+        struct wkv_match_t match;
+        match.key_len            = key_len;
+        match.key                = buf;
+        match.substitution_count = 0;    // TODO: implement substitutions
+        match.substitutions      = NULL; // TODO: implement substitutions
+        match.value              = node->value;
+        result                   = on_match(self, context, match);
     }
     return result;
 }

@@ -134,8 +134,9 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const con
 /// Returns:
 /// - Value as-is on success.
 /// - If this key is already known (not unique), the value of the existing key.
-/// - NULL if out of memory or key exceeds WKV_KEY_MAX_LEN.
+/// - NULL if out of memory.
 /// Therefore, to check if the key is inserted successfully, compare the returned value against the original value.
+/// Keys that exceed WKV_KEY_MAX_LEN are truncated for memory safety reasons.
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value);
 
 /// This is like wkv_add, but it overwrites the existing value if the key already exists.
@@ -279,7 +280,7 @@ static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t
 
 static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, size_t key_len, const char* const key)
 {
-    if ((self == NULL) || (key == NULL) || (self->sep == '\0') || (key_len > WKV_KEY_MAX_LEN)) {
+    if ((self == NULL) || (key == NULL) || (self->sep == '\0')) {
         WKV_ASSERT(false);
         return NULL;
     }

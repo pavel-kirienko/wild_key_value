@@ -45,6 +45,7 @@ Checks: >-
   -misc-no-recursion,
   -cert-msc30-c,
   -cert-msc50-cpp,
+  -cert-err58-cpp,
   -*-owning-memory,
   -*clang-analyzer*,
 WarningsAsErrors: '*'

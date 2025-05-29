@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <iostream>
 
 void setUp() {}
 
@@ -71,16 +72,40 @@ private:
     std::size_t oom_count_     = 0;
 };
 
+void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
+{
+    const auto indent = static_cast<int>(depth * 2);
+    for (std::size_t i = 0; i < node->n_edges; ++i) {
+        const ::wkv_edge_t* const edge = node->edges[i];
+        char                      payload[256];
+        if (edge->node.payload != nullptr) {
+            (void)std::snprintf(payload, sizeof(payload), "%p", edge->node.payload);
+        } else {
+            payload[0] = '\0';
+        }
+        std::printf("%*s#%zu '%s': %s\n", indent, "", i, edge->seg, payload);
+        print(&edge->node, depth + 1);
+    }
+}
+
+[[nodiscard]] void* i2ptr(const auto i)
+{
+    return reinterpret_cast<void*>(i);
+}
+
 void test_basic()
 {
-    Memory mem(20);
-    wkv_t  wkv   = wkv_init(Memory::trampoline_realloc, Memory::trampoline_free, &mem);
-    char   foo[] = "foo";
-    TEST_ASSERT_EQUAL_PTR(foo, wkv_add(&wkv, foo, '/', foo));
-    char foo1[] = "/foo/";
-    TEST_ASSERT_EQUAL_PTR(foo1, wkv_add(&wkv, foo1, '/', foo1));
-    char foo2[] = "//foo//";
-    TEST_ASSERT_EQUAL_PTR(foo2, wkv_add(&wkv, foo2, '/', foo2));
+    Memory mem(50);
+    wkv_t  wkv = wkv_init(Memory::trampoline_realloc, Memory::trampoline_free, &mem);
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_add(&wkv, "foo", '/', i2ptr(0xA)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "/foo/", '/', i2ptr(0xB)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "//foo//", '/', i2ptr(0xC)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "/foo/bar", '/', i2ptr(0xD)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(0xE)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "/foo/bar/", '/', i2ptr(1))); // conflict, ignored
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "/foo/bar/baz", '/', i2ptr(0xF)));
+    print(&wkv.root);
+    std::cout << "Fragments: " << mem.get_fragments() << ", OOMs: " << mem.get_oom_count() << std::endl;
 }
 
 } // namespace

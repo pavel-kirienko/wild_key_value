@@ -75,6 +75,7 @@ struct wkv_edge_t
 /// There are allocations of the following sizes:
 /// - sizeof(struct wkv_node_t) + strlen(key_segment) + 1
 /// - n_edges * sizeof(pointer)
+/// Each node takes one allocation, unless it has no outgoing edges; each edge takes one allocation always.
 ///
 /// Realloc is used to allocate new memory with the original pointer being NULL, and also to resize the edges pointer
 /// array when entries are added/removed.
@@ -112,6 +113,7 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, const wkv_free_
     return out;
 }
 
+/// Repeated separators are acceptable.
 /// None of the pointers are allowed to be NULL.
 /// Returns:
 /// - Payload as-is on success.

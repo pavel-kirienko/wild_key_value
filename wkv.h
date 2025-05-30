@@ -168,10 +168,11 @@ static inline void* wkv_del(struct wkv_t* const self, const char* const key);
 
 /// When a wildcard match occurs, the list of all segments that matched the wildcards in the query
 /// is reported using this structure. The elements are ordered in the same way as they appear in the query.
-/// For example, pattern "/abc/*/def/**" matching "/abc/123/def/foo/456" produces the following substitution list:
+/// For example, pattern "/abc/*/def/**" matching "/abc/123/def/foo/456/xyz" produces the following substitution list:
 /// 1. "123"
 /// 2. "foo"
 /// 3. "456"
+/// 4. "xyz"
 /// If the pattern contains only non-recursive substitutions, then the number of substitutions equals the number of
 /// substition symbols in the query. If a recursive substitution is present, then the number of substitutions
 /// may be greater.

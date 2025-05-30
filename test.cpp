@@ -313,37 +313,37 @@ void test_gather_key()
 
     char buf[WKV_KEY_MAX_LEN + 1];
 
-    const ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, 4, "xx/a");
+    const ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, { 4, "xx/a" });
     TEST_ASSERT(n->value == i2ptr(0xA));
     _wkv_gather_key(n, 4, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx/a", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, 5, "xx//b");
+    n = _wkv_get(&wkv, &wkv.root, { 5, "xx//b" });
     TEST_ASSERT(n->value == i2ptr(0xB));
     _wkv_gather_key(n, 5, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx//b", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, 0, "");
+    n = _wkv_get(&wkv, &wkv.root, { 0, "" });
     TEST_ASSERT(n->value == i2ptr(0xC));
     _wkv_gather_key(n, 0, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, 1, "/");
+    n = _wkv_get(&wkv, &wkv.root, { 1, "/" });
     TEST_ASSERT(n->value == i2ptr(0xD));
     _wkv_gather_key(n, 1, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, 1, "e");
+    n = _wkv_get(&wkv, &wkv.root, { 1, "e" });
     TEST_ASSERT(n->value == i2ptr(0xE));
     _wkv_gather_key(n, 1, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("e", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, 7, "/xx//f/");
+    n = _wkv_get(&wkv, &wkv.root, { 7, "/xx//f/" });
     TEST_ASSERT(n->value == i2ptr(0xF));
     _wkv_gather_key(n, 7, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/xx//f/", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, 2, "//");
+    n = _wkv_get(&wkv, &wkv.root, { 2, "//" });
     TEST_ASSERT(n->value == i2ptr(0x1));
     _wkv_gather_key(n, 2, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("//", buf);

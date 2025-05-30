@@ -94,16 +94,34 @@ struct wkv_edge_t
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
 
+/// Internally, Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
+/// User-supplied keys are converted to this format early.
+struct wkv_str_t
+{
+    size_t      len; ///< Length of the string, excluding the trailing NUL.
+    const char* str; ///< NUL-terminated string of length 'len'.
+};
+
+/// When a wildcard match occurs, the list of all segments that matched the wildcards in the query
+/// is reported using this structure. The elements are ordered in the same way as they appear in the query.
+/// For example, wildcard "/abc/*/def/**" matching "/abc/123/def/foo/456" produces the following substitution list:
+/// 1. "123"
+/// 2. "foo/456"
+/// The length of the list equals the number of wildcards in the query.
+struct wkv_substitution_t
+{
+    struct wkv_str_t           str;  ///< The string that matched the wildcard in the query is the base type.
+    struct wkv_substitution_t* next; ///< Next substitution in the linked list, NULL if this is the last one.
+};
+
 struct wkv_match_t
 {
     /// Full reconstructed key. Lifetime ends upon return from the match callback.
-    size_t      key_len;
-    const char* key;
+    struct wkv_str_t key;
 
     /// Substitutions that matched the corresponding wildcards in the query.
-    /// E.g., "/abc/123/def/foo/456" matching "/abc/*/def/**" produces "123" and "foo/456".
-    size_t       substitution_count;
-    const char** substitutions;
+    /// NULL if there were no wildcards in the query.
+    struct wkv_substitution_t* substitutions;
 
     /// The value associated with the key that matched the query.
     void* value;
@@ -198,23 +216,31 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
     }
 }
 
+static inline struct wkv_str_t _wkv_key(const char* const str)
+{
+    WKV_ASSERT(str != NULL);
+    struct wkv_str_t out;
+    // Use max+1 to avoid truncating long keys, as that may cause an invalid key to match an existing valid key.
+    out.len = strnlen(str, WKV_KEY_MAX_LEN + 1);
+    out.str = str;
+    return out;
+}
+
 /// Allocates the edge and its key segment in the same dynamically-sized memory block.
 static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
                                         struct wkv_node_t* const parent,
-                                        const size_t             seg_len,
-                                        const char* const        seg)
+                                        const struct wkv_str_t   seg)
 {
-    WKV_ASSERT(seg != NULL);
     struct wkv_edge_t* const edge =
-      (struct wkv_edge_t*)self->realloc(self, NULL, offsetof(struct wkv_edge_t, seg) + seg_len + 1U);
+      (struct wkv_edge_t*)self->realloc(self, NULL, offsetof(struct wkv_edge_t, seg) + seg.len + 1U);
     if (edge != NULL) {
         edge->node.parent  = parent;
         edge->node.n_edges = 0;
         edge->node.edges   = NULL;
         edge->node.value   = NULL;
-        edge->seg_len      = seg_len;
-        memcpy(&edge->seg[0], seg, seg_len);
-        edge->seg[seg_len] = '\0';
+        edge->seg_len      = seg.len;
+        memcpy(&edge->seg[0], seg.str, seg.len);
+        edge->seg[seg.len] = '\0';
     }
     return edge;
 }
@@ -223,7 +249,6 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
 /// Returns negated (insertion point plus one) if the segment is not found.
 static ptrdiff_t _wkv_bisect(const struct wkv_node_t* const node, const size_t seg_len, const char* const seg)
 {
-    WKV_ASSERT((node != NULL) && (seg != NULL));
     size_t lo = 0;
     size_t hi = node->n_edges;
     while (lo < hi) {
@@ -297,22 +322,22 @@ static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t
     }
 }
 
-static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, size_t key_len, const char* const key)
+static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, const struct wkv_str_t key)
 {
-    if ((self == NULL) || (key == NULL) || (self->sep == '\0')) {
+    if ((self == NULL) || (self->sep == '\0')) {
         WKV_ASSERT(false);
         return NULL;
     }
-    if (key_len > WKV_KEY_MAX_LEN) {
+    if (key.len > WKV_KEY_MAX_LEN) {
         return NULL;
     }
-    struct wkv_node_t* n   = &self->root;
-    const char*        seg = key;
+    struct wkv_node_t* n                 = &self->root;
+    size_t             remaining_key_len = key.len;
+    struct wkv_str_t   seg               = key;
     for (;;) {
-        const char* const slash   = (const char*)memchr(seg, self->sep, key_len);
-        const size_t      seg_len = (slash != NULL) ? (size_t)(slash - seg) : key_len;
-
-        ptrdiff_t k = _wkv_bisect(n, seg_len, seg);
+        const char* const slash = (const char*)memchr(seg.str, self->sep, remaining_key_len);
+        seg.len                 = (slash != NULL) ? (size_t)(slash - seg.str) : remaining_key_len;
+        ptrdiff_t k             = _wkv_bisect(n, seg.len, seg.str);
         if (k < 0) { // Insort the new edge.
             k = -(k + 1);
             WKV_ASSERT((k >= 0) && (k <= (ptrdiff_t)n->n_edges));
@@ -323,7 +348,7 @@ static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, size_t ke
                   (struct wkv_edge_t**)self->realloc(self, n->edges, (n->n_edges + 1) * sizeof(struct wkv_edge_t*));
                 if (new_edges != NULL) {
                     n->edges = new_edges; // Will be shrunk later if necessary.
-                    new_e    = _wkv_edge_new(self, n, seg_len, seg);
+                    new_e    = _wkv_edge_new(self, n, seg);
                 }
             }
             if (NULL == new_e) {
@@ -340,9 +365,9 @@ static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, size_t ke
         if (slash == NULL) {
             break;
         }
-        seg = slash + 1;
-        WKV_ASSERT(key_len > seg_len);
-        key_len -= seg_len + 1;
+        seg.str = slash + 1;
+        WKV_ASSERT(remaining_key_len > seg.len);
+        remaining_key_len -= seg.len + 1;
     }
     WKV_ASSERT(n != NULL);
     return n;
@@ -350,8 +375,7 @@ static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, size_t ke
 
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value)
 {
-    // We use max len plus one to detect overly long keys.
-    struct wkv_node_t* const n = _wkv_insert(self, strnlen(key, WKV_KEY_MAX_LEN + 1), key);
+    struct wkv_node_t* const n = _wkv_insert(self, _wkv_key(key));
     if (n != NULL) {
         if (n->value == NULL) {
             n->value = value; // Assign the value only if this is a new key.
@@ -363,8 +387,7 @@ static inline void* wkv_add(struct wkv_t* const self, const char* const key, voi
 
 static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value)
 {
-    // We use max len plus one to detect overly long keys.
-    struct wkv_node_t* const n = _wkv_insert(self, strnlen(key, WKV_KEY_MAX_LEN + 1), key);
+    struct wkv_node_t* const n = _wkv_insert(self, _wkv_key(key));
     if (n != NULL) {
         n->value = value; // Assign the value regardless of whether this is a new key or not.
         return n->value;
@@ -374,18 +397,17 @@ static inline void* wkv_set(struct wkv_t* const self, const char* const key, voi
 
 static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
                                           const struct wkv_node_t* const node,
-                                          const size_t                   key_len,
-                                          const char* const              key)
+                                          struct wkv_str_t               key)
 {
-    if ((self == NULL) || (key == NULL) || (self->sep == '\0')) {
+    if ((self == NULL) || (self->sep == '\0')) {
         WKV_ASSERT(false);
         return NULL;
     }
-    const char* const  slash   = (const char*)memchr(key, self->sep, key_len);
-    const size_t       seg_len = (slash != NULL) ? (size_t)(slash - key) : key_len;
+    const char* const  slash   = (const char*)memchr(key.str, self->sep, key.len);
+    const size_t       seg_len = (slash != NULL) ? (size_t)(slash - key.str) : key.len;
     const bool         is_last = (slash == NULL);
     struct wkv_node_t* result  = NULL;
-    const ptrdiff_t    k       = _wkv_bisect(node, seg_len, key);
+    const ptrdiff_t    k       = _wkv_bisect(node, seg_len, key.str);
     if (k >= 0) {
         WKV_ASSERT((size_t)k < node->n_edges);
         struct wkv_edge_t* const edge = node->edges[k];
@@ -393,7 +415,9 @@ static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
         if (is_last) {
             result = &edge->node;
         } else {
-            result = _wkv_get(self, &edge->node, key_len - seg_len - 1, slash + 1);
+            key.len -= seg_len + 1;
+            key.str = slash + 1;
+            result  = _wkv_get(self, &edge->node, key);
         }
     }
     return result;
@@ -401,15 +425,13 @@ static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
 
 static inline void* wkv_get(const struct wkv_t* const self, const char* const key)
 {
-    // Use max+1 to avoid truncating long keys, as that may cause an invalid key to match an existing valid key.
-    const struct wkv_node_t* const node = _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN + 1), key);
+    const struct wkv_node_t* const node = _wkv_get(self, &self->root, _wkv_key(key));
     return (node != NULL) ? node->value : NULL;
 }
 
 static inline void* wkv_remove(struct wkv_t* const self, const char* const key)
 {
-    // Use max+1 to avoid truncating long keys, as that may cause an invalid key to match an existing valid key.
-    struct wkv_node_t* const node  = _wkv_get(self, &self->root, strnlen(key, WKV_KEY_MAX_LEN + 1), key);
+    struct wkv_node_t* const node  = _wkv_get(self, &self->root, _wkv_key(key));
     void*                    value = NULL;
     if (node != NULL) {
         value       = node->value;
@@ -451,7 +473,8 @@ struct _wkv_find_all_context_t
     wkv_on_match_t on_match;
 };
 
-static inline void* _wkv_on_match_maybe(struct _wkv_find_all_context_t* const ctx, const struct wkv_node_t* const node)
+static inline void* _wkv_on_match_maybe(const struct _wkv_find_all_context_t* const ctx,
+                                        const struct wkv_node_t* const              node)
 {
     void* result = NULL;
     if (node->value != NULL) {
@@ -465,12 +488,11 @@ static inline void* _wkv_on_match_maybe(struct _wkv_find_all_context_t* const ct
         ];
         _wkv_gather_key(node, ctx->key_len, ctx->self->sep, buf);
         struct wkv_match_t match;
-        match.key_len            = ctx->key_len;
-        match.key                = buf;
-        match.substitution_count = 0;    // TODO: implement substitutions
-        match.substitutions      = NULL; // TODO: implement substitutions
-        match.value              = node->value;
-        result                   = ctx->on_match(ctx->self, ctx->context, match);
+        match.key.len       = ctx->key_len;
+        match.key.str       = buf;
+        match.substitutions = NULL; // TODO: implement substitutions
+        match.value         = node->value;
+        result              = ctx->on_match(ctx->self, ctx->context, match);
     }
     return result;
 }
@@ -523,7 +545,8 @@ static inline void* wkv_match(struct wkv_t* const  self,
     ctx.context  = context;
     ctx.wild     = wild;
     ctx.on_match = on_match;
-    return _wkv_find_all(&ctx, &self->root, strnlen(query, WKV_KEY_MAX_LEN), query);
+    // Use max+1 to avoid truncating long keys, as that may cause an invalid key to match an existing valid key.
+    return _wkv_find_all(&ctx, &self->root, strnlen(query, WKV_KEY_MAX_LEN + 1), query);
 }
 
 #ifdef __cplusplus

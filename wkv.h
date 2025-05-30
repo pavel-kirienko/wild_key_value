@@ -66,7 +66,7 @@ struct wkv_str_t
     const char* str; ///< NUL-terminated string of length 'len'.
 };
 
-/// A fundamental invariant of WKV is that every node has EITHER a value or outgoing edges.
+/// A fundamental invariant of WKV is that every node has a value or outgoing edges. Nodes with neither are removed.
 struct wkv_node_t
 {
     struct wkv_node_t*  parent; ///< NULL if this is the root node.
@@ -595,16 +595,53 @@ static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const ctx,
                                          const wkv_substitution_t* const    sub_head,
                                          wkv_substitution_t* const          sub_tail);
 
-static inline void* _wkv_matcher_descend_verbatim(const struct _wkv_matcher_t* const ctx,
-                                                  const struct wkv_node_t* const     node,
-                                                  const struct _wkv_split_t          x,
-                                                  const size_t                       prefix_len,
-                                                  const wkv_substitution_t* const    sub_head,
-                                                  wkv_substitution_t* const          sub_tail)
+static inline void* _wkv_matcher_descend_all(const struct _wkv_matcher_t* const ctx,
+                                             const struct wkv_node_t* const     node,
+                                             const struct wkv_str_t             next_seg,
+                                             bool                               recurse,
+                                             const size_t                       prefix_len,
+                                             const wkv_substitution_t* const    sub_head,
+                                             wkv_substitution_t* const          sub_tail)
+{
+    void* result = NULL;
+    for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
+        struct wkv_edge_t* const edge = node->edges[i];
+
+        // Create a new substitution for the current edge segment and link it into the list.
+        struct wkv_substitution_t        sub          = { _wkv_edge_seg(edge), NULL };
+        const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
+        if (sub_tail != NULL) {
+            sub_tail->next = &sub;
+        }
+
+        const struct _wkv_matcher_event_t evt = { &edge->node, prefix_len + edge->seg_len, sub_head_new };
+        if (!recurse) {
+            if (next_seg.str == NULL) {
+                result = ctx->cb(ctx, evt);
+            } else { // key len +1 because we have a separator after the segment.
+                result = _wkv_matcher_descend(ctx, evt.node, next_seg, evt.key_len + 1, sub_head_new, &sub);
+            }
+        } else {
+            WKV_ASSERT(next_seg.str == NULL);
+            result = ctx->cb(ctx, evt);
+            if (result == NULL) {
+                result = _wkv_matcher_descend_all(ctx, evt.node, next_seg, true, evt.key_len + 1, sub_head_new, &sub);
+            }
+        }
+    }
+    return result;
+}
+
+static inline void* _wkv_matcher_descend_one(const struct _wkv_matcher_t* const ctx,
+                                             const struct wkv_node_t* const     node,
+                                             const struct _wkv_split_t          x,
+                                             const size_t                       prefix_len,
+                                             const wkv_substitution_t* const    sub_head,
+                                             wkv_substitution_t* const          sub_tail)
 {
     void*           result = NULL;
     const ptrdiff_t k      = _wkv_bisect(node, x.head);
-    if (k >= 0) {
+    if (k >= 0) { // otherwise, no match on this subtree.
         struct wkv_edge_t* const    edge = node->edges[k];
         struct _wkv_matcher_event_t evt;
         evt.node          = &edge->node;
@@ -628,39 +665,9 @@ static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const ctx,
     const bool                wild_recurse =
       x.last && (x.head.len == 2) && (x.head.str[0] == ctx->wild) && (x.head.str[1] == ctx->wild);
     const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->wild);
-    void*      result       = NULL;
-    if (wild_segment || wild_recurse) {
-        for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
-            struct wkv_edge_t* const edge = node->edges[i];
-
-            // Create a new substitution for the current edge segment and link it into the list.
-            struct wkv_substitution_t        sub          = { _wkv_edge_seg(edge), NULL };
-            const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
-            if (sub_tail != NULL) {
-                sub_tail->next = &sub;
-            }
-
-            const struct _wkv_matcher_event_t evt = { &edge->node, prefix_len + edge->seg_len, sub_head_new };
-            if (wild_segment) {
-                if (x.last) {
-                    result = ctx->cb(ctx, evt);
-                } else { // key len +1 because we have a separator after the segment.
-                    result = _wkv_matcher_descend(ctx, evt.node, x.tail, evt.key_len + 1, sub_head_new, &sub);
-                }
-            } else {
-                WKV_ASSERT(x.last);
-                result = ctx->cb(ctx, evt);
-                if (result == NULL) {
-                    // Note that we pass onwards the same wildcard, x.head, because it is applied recursively until end.
-                    // The segment is only 2-symbols long, so we won't waste time on memchr inside the split function.
-                    result = _wkv_matcher_descend(ctx, evt.node, x.head, evt.key_len + 1, sub_head_new, &sub);
-                }
-            }
-        }
-    } else {
-        result = _wkv_matcher_descend_verbatim(ctx, node, x, prefix_len, sub_head, sub_tail);
-    }
-    return result;
+    return (wild_segment || wild_recurse)
+             ? _wkv_matcher_descend_all(ctx, node, x.tail, wild_recurse, prefix_len, sub_head, sub_tail)
+             : _wkv_matcher_descend_one(ctx, node, x, prefix_len, sub_head, sub_tail);
 }
 
 // ----------------------------------------            wkv_match            ----------------------------------------

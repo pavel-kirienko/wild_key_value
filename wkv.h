@@ -236,14 +236,17 @@ typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, struct wkv_ma
 /// Matching elements are reported in an unspecified order.
 /// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
 /// If no matches are found or on_match returns NULL for all matches, then NULL is returned.
-static inline void* wkv_get_all(struct wkv_t* const  self,
-                                const char* const    query,
-                                const char           wild,
-                                void* const          context,
-                                const wkv_on_match_t on_match);
+static inline void* wkv_match(struct wkv_t* const  self,
+                              const char* const    pattern,
+                              const char           wild,
+                              void* const          context,
+                              const wkv_on_match_t on_match);
 
+// ====================================================================================================================
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
+// ====================================================================================================================
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
+// ====================================================================================================================
 
 static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 {
@@ -580,12 +583,12 @@ struct _wkv_matcher_t
 /// index for the next iteration.
 static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
                                      const struct wkv_node_t* const  node,
-                                     const struct wkv_str_t          query,
+                                     const struct wkv_str_t          pattern,
                                      const size_t                    prefix_len,
                                      const wkv_substitution_t* const sub_head,
                                      wkv_substitution_t* const       sub_tail)
 {
-    const struct _wkv_split_t x = _wkv_split(query, ctx->self->sep);
+    const struct _wkv_split_t x = _wkv_split(pattern, ctx->self->sep);
     const bool                wild_recurse =
       x.last && (x.head.len == 2) && (x.head.str[0] == ctx->wild) && (x.head.str[1] == ctx->wild);
     const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->wild);
@@ -640,20 +643,20 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
     return result;
 }
 
-// ----------------------------------------            wkv_get_all            ----------------------------------------
+// ----------------------------------------            wkv_match            ----------------------------------------
 
-struct _wkv_get_all_context_t
+struct _wkv_match_context_t
 {
     struct _wkv_matcher_t base;
     void*                 context;
     wkv_on_match_t        on_match;
 };
 
-static inline void* _wkv_get_all_cb_adapter(struct _wkv_matcher_t* const ctx, const struct _wkv_matcher_event_t evt)
+static inline void* _wkv_match_cb_adapter(struct _wkv_matcher_t* const ctx, const struct _wkv_matcher_event_t evt)
 {
     void* result = NULL;
     if (evt.node->value != NULL) {
-        const struct _wkv_get_all_context_t* const cast = (struct _wkv_get_all_context_t*)ctx;
+        const struct _wkv_match_context_t* const cast = (struct _wkv_match_context_t*)ctx;
         WKV_ASSERT(evt.key_len <= WKV_KEY_MAX_LEN);
         char buf[1 +
 #ifdef __cplusplus
@@ -671,20 +674,20 @@ static inline void* _wkv_get_all_cb_adapter(struct _wkv_matcher_t* const ctx, co
     return result;
 }
 
-static inline void* wkv_get_all(struct wkv_t* const  self,
-                                const char* const    query,
-                                const char           wild,
-                                void* const          context,
-                                const wkv_on_match_t on_match)
+static inline void* wkv_match(struct wkv_t* const  self,
+                              const char* const    pattern,
+                              const char           wild,
+                              void* const          context,
+                              const wkv_on_match_t on_match)
 {
-    struct _wkv_get_all_context_t ctx;
+    struct _wkv_match_context_t ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.base.self = self;
     ctx.base.wild = wild;
-    ctx.base.cb   = _wkv_get_all_cb_adapter;
+    ctx.base.cb   = _wkv_match_cb_adapter;
     ctx.context   = context;
     ctx.on_match  = on_match;
-    return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(query), 0, NULL, NULL);
+    return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(pattern), 0, NULL, NULL);
 }
 
 #ifdef __cplusplus

@@ -312,7 +312,7 @@ void test_long_keys()
     MatchCollector collector;
     long_boy[WKV_KEY_MAX_LEN] = 'a';
     TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, long_boy, '*', &collector, MatchCollector::trampoline));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, long_boy, '*', &collector, MatchCollector::trampoline));
 
     // Cleanup.
     long_boy[WKV_KEY_MAX_LEN] = 0;
@@ -470,7 +470,7 @@ void test_reconstruct_key()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void test_get_all()
+void test_match()
 {
     Memory mem(50);
     wkv_t  wkv = wkv_init(Memory::trampoline, &mem);
@@ -501,47 +501,47 @@ void test_get_all()
     // Query literal.
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a", '*', &collector, MatchCollector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), collector.get_only().value);
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a1", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a1", '*', &collector, MatchCollector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a1", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA1), collector.get_only().value);
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a2", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a2", '*', &collector, MatchCollector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a2", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA2), collector.get_only().value);
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/d/6/e", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/6/e", '*', &collector, MatchCollector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a/d/6/e", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), collector.get_only().value);
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/d/6/", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/6/", '*', &collector, MatchCollector::trampoline));
         TEST_ASSERT_EQUAL_size_t(0, collector.get_matches().size());
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "", '*', &collector, MatchCollector::trampoline));
         TEST_ASSERT_EQUAL_size_t(0, collector.get_matches().size());
     }
 
     // Query non-recursive substitution.
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
         TEST_ASSERT(matches[0].check("a", { "a" }, i2ptr(0xA)));
@@ -550,7 +550,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
         TEST_ASSERT(matches[0].check("a/b", { "b" }, i2ptr(0xB)));
@@ -559,7 +559,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*/b", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/b", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b", { "a" }, i2ptr(0xB)));
@@ -567,7 +567,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*/*/*", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/*/*", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(5, matches.size());
         TEST_ASSERT(matches[0].check("a/b/1", { "a", "b", "1" }, i2ptr(0x1)));
@@ -578,7 +578,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*/c/*", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/c/*", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/c/1", { "a", "1" }, i2ptr(0x3)));
@@ -586,7 +586,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*/2", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/2", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b/2", { "b" }, i2ptr(0x2)));
@@ -596,7 +596,7 @@ void test_get_all()
     // Query recursive substitution.
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/b/**", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/b/**", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b/1", { "1" }, i2ptr(0x1)));
@@ -604,7 +604,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/d/**", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/**", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
         TEST_ASSERT(matches[0].check("a/d/5", { "5" }, i2ptr(0x5)));
@@ -613,7 +613,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "**", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(14, matches.size()); // everything is matched
         for (const auto& m : matches) {
@@ -624,7 +624,7 @@ void test_get_all()
     }
     {
         MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*/6/**", '*', &collector, MatchCollector::trampoline));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/6/**", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/d/6/e", { "d", "e" }, i2ptr(0xE)));
@@ -669,7 +669,7 @@ int main(const int argc, const char* const argv[])
     RUN_TEST(test_long_keys);
     RUN_TEST(test_backtrack);
     RUN_TEST(test_reconstruct_key);
-    RUN_TEST(test_get_all);
+    RUN_TEST(test_match);
     RUN_TEST(test_empty_key);
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)

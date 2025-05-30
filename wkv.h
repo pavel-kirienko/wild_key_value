@@ -571,21 +571,19 @@ static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* nod
                                                     char* const              buf)
 {
     WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
-    char* p    = &buf[key_len];
-    *p         = '\0';
-    bool first = true;
+    char* p = &buf[key_len];
+    *p      = '\0';
     while (node->parent != NULL) {
         WKV_ASSERT(node->parent->n_edges > 0);
-        if (!first) {
-            *--p = sep;
-        }
-        first                               = false;
         const struct wkv_edge_t* const edge = (const struct wkv_edge_t*)node;
         WKV_ASSERT(edge->seg_len <= key_len);
         p -= edge->seg_len;
         WKV_ASSERT(p >= buf);
         memcpy(p, edge->seg, edge->seg_len);
         node = node->parent;
+        if (node->parent != NULL) {
+            *--p = sep;
+        }
     }
     WKV_ASSERT((buf[key_len] == '\0') && (p == buf) && (strlen(p) == key_len));
     const struct wkv_str_t out = { key_len, p };

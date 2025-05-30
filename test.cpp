@@ -595,8 +595,8 @@ void test_get_all()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*/6/**", '*', &collector, MatchCollector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
-        TEST_ASSERT(matches[1].check("a/d/6/e", { "d", "e" }, i2ptr(0xE)));
-        TEST_ASSERT(matches[2].check("a/d/6/f", { "d", "f" }, i2ptr(0xF)));
+        TEST_ASSERT(matches[0].check("a/d/6/e", { "d", "e" }, i2ptr(0xE)));
+        TEST_ASSERT(matches[1].check("a/d/6/f", { "d", "f" }, i2ptr(0xF)));
     }
 
     // Cleanup.

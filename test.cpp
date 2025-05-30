@@ -494,7 +494,7 @@ void test_get_all()
         TEST_ASSERT_EQUAL_size_t(0, collector.get_matches().size());
     }
 
-    // Query wildcard.
+    // Query non-recursive substitution.
     {
         MatchCollector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*", '*', &collector, MatchCollector::trampoline));
@@ -547,6 +547,25 @@ void test_get_all()
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b/2", { "b" }, i2ptr(0x2)));
         TEST_ASSERT(matches[1].check("a/c/2", { "c" }, i2ptr(0x4)));
+    }
+
+    // Query recursive substitution.
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/b/**", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(2, matches.size());
+        TEST_ASSERT(matches[0].check("a/b/1", { "1" }, i2ptr(0x1)));
+        TEST_ASSERT(matches[1].check("a/b/2", { "2" }, i2ptr(0x2)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/d/**", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(3, matches.size());
+        TEST_ASSERT(matches[0].check("a/d/5", { "5" }, i2ptr(0x5)));
+        TEST_ASSERT(matches[1].check("a/d/6/e", { "6", "e" }, i2ptr(0xE)));
+        TEST_ASSERT(matches[2].check("a/d/6/f", { "6", "f" }, i2ptr(0xF)));
     }
 
     // Cleanup.

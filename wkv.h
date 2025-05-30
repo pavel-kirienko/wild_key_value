@@ -86,18 +86,18 @@ struct wkv_edge_t
 };
 
 /// When a new entry is inserted, Wild Key-Value needs to allocate tree nodes in the dynamic memory.
-/// There are allocations of the following sizes:
-/// - sizeof(struct wkv_node_t) + strlen(key_segment) + 1
-/// - n_edges * sizeof(pointer)
 /// Each node takes one allocation, unless it has no outgoing edges; each edge takes one allocation always.
+/// Per-edge allocation is of size sizeof(struct wkv_node_t) + sizeof(size_t) + strlen(key_segment) + 1.
+/// Per-node allocation is of size n_edges * sizeof(pointer).
 ///
 /// Realloc is used to:
 /// - Allocate new memory with the original pointer being NULL.
 /// - To free memory when the size is zero.
 /// - To resize the edges pointer array when entries are added/removed.
 ///
-/// The semantics are per the standard realloc from stdlib, with one difference: if the fragment is reduced in size,
-/// reallocation MUST succeed.
+/// The semantics are per the standard realloc from stdlib, except:
+/// - If the fragment is not increased in size, reallocation MUST succeed.
+/// - If the size is zero, it must behave like free() (which is often the case but technically an UB).
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
@@ -148,33 +148,49 @@ static inline bool wkv_is_empty(const struct wkv_t* const self)
 /// - If this key is already known (not unique), the value of the existing key.
 /// - NULL if out of memory or key is longer than WKV_KEY_MAX_LEN.
 /// Therefore, to check if the key is inserted successfully, compare the returned value against the original value.
+/// Complexity logarithmic in the number of keys in the container.
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value);
 
 /// This is like wkv_add, but it overwrites the existing value if the key already exists.
 /// Returns:
 /// - Value as-is on success.
 /// - NULL if out of memory.
+/// Complexity logarithmic in the number of keys in the container.
 static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value);
 
-/// Find a key using literal matching, without wildcards. Every character in the key is treated verbatim.
+/// Find a key using literal matching (without wildcards). Every character in the key is treated verbatim.
 /// NULL if no such key exists.
+/// Complexity logarithmic in the number of keys in the container.
 static inline void* wkv_get(const struct wkv_t* const self, const char* const key);
 
-/// Removes the key using literal matching, without wildcards. Every character in the key is treated verbatim.
+/// Removes the key using literal matching (without wildcards). Every character in the key is treated verbatim.
 /// Returns the value of the removed key if it was found, NULL if it didn't exist.
+/// Complexity logarithmic in the number of keys in the container.
 static inline void* wkv_del(struct wkv_t* const self, const char* const key);
 
 // ----------------------------------------          WILDCARD KEY API          ----------------------------------------
 
-/// When a wildcard match occurs, the list of all segments that matched the wildcards in the query
+/// A wildcard is a pattern that contains substitution symbols. WKV currently recognizes two types of substitutions:
+///
+/// Single segment substitution: "/abc/*/def" -- matches "/abc/123/def", with "123" being the substitution.
+/// The single-segment substitution symbol must be the only symbol in the segment;
+/// otherwise, the segment is treated as a literal (matches only itself).
+///
+/// Recursive substitution: "abc/**" -- matches everything with the "abc/" prefix, e.g. "abc/123/456/789".
+/// The recursive substitution pattern can only occur at the end of the pattern;
+/// otherwise, it is treated as a literal (matches only itself).
+/// It obviously follows that there may be at most one recursive substitution in the pattern.
+///
+/// When a wildcard match occurs, the list of all substitution patterns that matched the corresponding query segments
 /// is reported using this structure. The elements are ordered in the same way as they appear in the query.
-/// For example, pattern "/abc/*/def/**" matching "/abc/123/def/foo/456/xyz" produces the following substitution list:
-/// 1. "123"
-/// 2. "foo"
+/// For example, pattern "abc/*/def/**" matching "abc/123/def/foo/456/xyz" produces the following substitution list:
+/// 1. "123"  <-- from the first *
+/// 2. "foo"  <-- this and the following come from **.
 /// 3. "456"
 /// 4. "xyz"
+///
 /// If the pattern contains only non-recursive substitutions, then the number of substitutions equals the number of
-/// substition symbols in the query. If a recursive substitution is present, then the number of substitutions
+/// substition segments in the query. If a recursive substitution is present, then the number of substitutions
 /// may be greater.
 struct wkv_substitution_t
 {
@@ -510,7 +526,7 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
             // Create a new event and either report it or recurse further.
             struct _wkv_matcher_event_t evt;
             evt.node          = &edge->node;
-            evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1);
+            evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1); // TODO FIXME INCORRECT
             evt.substitutions = sub_head_new;
             if (wild_segment) {
                 result = x.last //

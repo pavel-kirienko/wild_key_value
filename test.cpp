@@ -110,6 +110,18 @@ public:
                    std::equal(this->substitutions.begin(), this->substitutions.end(), substitutions.begin()) &&
                    (this->value == value);
         }
+
+        [[nodiscard]] std::string join_substitutions(const std::string_view sep = "/") const
+        {
+            std::string result;
+            for (const auto& s : substitutions) {
+                if (!result.empty()) {
+                    result += sep;
+                }
+                result += s;
+            }
+            return result;
+        }
     };
 
     [[nodiscard]] const std::vector<Match>& get_matches() const { return matches_; }
@@ -566,6 +578,25 @@ void test_get_all()
         TEST_ASSERT(matches[0].check("a/d/5", { "5" }, i2ptr(0x5)));
         TEST_ASSERT(matches[1].check("a/d/6/e", { "6", "e" }, i2ptr(0xE)));
         TEST_ASSERT(matches[2].check("a/d/6/f", { "6", "f" }, i2ptr(0xF)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "**", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(14, matches.size()); // everything is matched
+        for (const auto& m : matches) {
+            // std::cout << "Match: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
+            TEST_ASSERT(m.value != nullptr);
+            TEST_ASSERT(m.join_substitutions() == m.key);
+        }
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*/6/**", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(2, matches.size());
+        TEST_ASSERT(matches[1].check("a/d/6/e", { "d", "e" }, i2ptr(0xE)));
+        TEST_ASSERT(matches[2].check("a/d/6/f", { "d", "f" }, i2ptr(0xF)));
     }
 
     // Cleanup.

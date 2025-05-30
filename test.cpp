@@ -11,6 +11,7 @@
 #include <string_view>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 void setUp() {}
 
@@ -226,6 +227,35 @@ void test_basic()
     TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "/nonexistent/"));
     TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, "//nonexistent//"));
 
+    // Check indexing. Simply iterate until we get all keys and ensure that each occurred exactly once.
+    {
+        const size_t                    expected_count = count(&wkv);
+        std::unordered_set<std::string> keys{ "foo", "/foo/", "//foo//", "/foo/bar", "/foo/bar/", "/foo/bar/baz", "" };
+        for (size_t i = 0; i < expected_count; ++i) {
+            char        key[WKV_KEY_MAX_LEN + 2];
+            size_t      key_len = WKV_KEY_MAX_LEN + 1;
+            void* const value   = wkv_at(&wkv, i, key, &key_len);
+            TEST_ASSERT(value != nullptr);
+            TEST_ASSERT(key_len <= WKV_KEY_MAX_LEN);
+            TEST_ASSERT_EQUAL_size_t(1, keys.erase(key));
+            TEST_ASSERT_EQUAL_size_t(key_len, std::strlen(key));
+
+            // compare against the reference
+            TEST_ASSERT_EQUAL_PTR(value, wkv_get(&wkv, key));
+
+            // edge cases
+            TEST_ASSERT_EQUAL_PTR(value, wkv_at(&wkv, i, nullptr, nullptr));
+            TEST_ASSERT_EQUAL_PTR(value, wkv_at(&wkv, i, key, nullptr));
+            TEST_ASSERT_EQUAL_PTR(value, wkv_at(&wkv, i, nullptr, &key_len));
+            key_len = 0;
+            TEST_ASSERT_EQUAL_PTR(value, wkv_at(&wkv, i, nullptr, &key_len));
+            TEST_ASSERT_EQUAL_size_t(0, key_len);
+        }
+        TEST_ASSERT_EQUAL_size_t(0, keys.size());
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_at(&wkv, expected_count, nullptr, nullptr));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_at(&wkv, 100, nullptr, nullptr));
+    }
+
     // Delete some keys.
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), wkv_del(&wkv, "foo"));
     TEST_ASSERT_EQUAL_size_t(6, count(&wkv));
@@ -241,6 +271,8 @@ void test_basic()
 
     TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
     TEST_ASSERT(wkv_is_empty(&wkv));
+
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_at(&wkv, 0, nullptr, nullptr));
 }
 
 void test_long_keys()

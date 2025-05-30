@@ -168,6 +168,17 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
 /// Complexity logarithmic in the number of keys in the container.
 static inline void* wkv_del(struct wkv_t* const self, const char* const key);
 
+/// Returns the value and key of the element at the specified index in an unspecified order.
+///
+/// The key storage must be at least WKV_KEY_MAX_LEN + 1 bytes large; key_len points to the actual length of
+/// the key buffer, not including the trailing NUL; it will be set to the length of the key that was returned.
+/// If key or key_len are NULL, or if the key buffer is too small, then the key will not be returned.
+/// To check if the key was returned, set key_len to WKV_KEY_MAX_LEN+1 and then check key_len<=WKV_KEY_MAX_LEN.
+///
+/// If the index is out of bounds, then NULL is returned.
+/// The complexity is linear in the number of keys in the container! This is not the primary way to access keys!
+static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const key, size_t* const key_len);
+
 // ----------------------------------------          WILDCARD KEY API          ----------------------------------------
 
 /// A wildcard is a pattern that contains substitution symbols. WKV currently recognizes two types of substitutions:
@@ -473,6 +484,73 @@ static inline void* wkv_del(struct wkv_t* const self, const char* const key)
     return value;
 }
 
+/// Ascend the tree and copy the full key leading to the current node into the buffer.
+static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* node,
+                                                    const size_t             key_len,
+                                                    const char               sep,
+                                                    char* const              buf)
+{
+    WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
+    char* p = &buf[key_len];
+    *p      = '\0';
+    while (node->parent != NULL) {
+        WKV_ASSERT(node->parent->n_edges > 0);
+        const struct wkv_edge_t* const edge = (const struct wkv_edge_t*)node;
+        WKV_ASSERT(edge->seg_len <= key_len);
+        p -= edge->seg_len;
+        WKV_ASSERT(p >= buf);
+        memcpy(p, edge->seg, edge->seg_len);
+        node = node->parent;
+        if (node->parent != NULL) {
+            *--p = sep;
+        }
+    }
+    WKV_ASSERT((buf[key_len] == '\0') && (p == buf) && (strlen(p) == key_len));
+    const struct wkv_str_t out = { key_len, p };
+    return out;
+}
+
+static inline struct wkv_node_t* _wkv_at(struct wkv_node_t* const node,
+                                         size_t* const            index,
+                                         size_t                   prefix_len,
+                                         size_t* const            out_key_len)
+{
+    if (node->value != NULL) {
+        if (*index == 0) {
+            *out_key_len = prefix_len - 1; // Remove trailing separator.
+            return node;
+        }
+        --*index;
+    }
+    for (size_t i = 0; i < node->n_edges; ++i) {
+        struct wkv_node_t* const child = _wkv_at(&node->edges[i]->node, //
+                                                 index,
+                                                 prefix_len + node->edges[i]->seg_len + 1, // +1 for the separator
+                                                 out_key_len);
+        if (child != NULL) {
+            return child;
+        }
+    }
+    return NULL;
+}
+
+static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const key, size_t* const key_len)
+{
+    void*                    result        = NULL;
+    size_t                   key_len_local = WKV_KEY_MAX_LEN + 1; // sentinel
+    struct wkv_node_t* const node          = _wkv_at(&self->root, &index, 0, &key_len_local);
+    if (node != NULL) {
+        WKV_ASSERT(node->value != NULL);
+        WKV_ASSERT(key_len_local <= WKV_KEY_MAX_LEN);
+        result = node->value;
+        if ((key != NULL) && (key_len != NULL) && (key_len_local <= *key_len)) {
+            *key_len = key_len_local;
+            (void)_wkv_reconstruct_key(node, key_len_local, self->sep, key);
+        }
+    }
+    return result;
+}
+
 // ----------------------------------------        FAST PATTERN MATCHER         ----------------------------------------
 
 struct _wkv_matcher_event_t
@@ -560,34 +638,6 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
         }
     }
     return result;
-}
-
-// ----------------------------------------       FULL KEY RECONSTRUCTOR       ----------------------------------------
-
-/// Ascend the tree and copy the full key leading to the current node into the buffer.
-static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* node,
-                                                    const size_t             key_len,
-                                                    const char               sep,
-                                                    char* const              buf)
-{
-    WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
-    char* p = &buf[key_len];
-    *p      = '\0';
-    while (node->parent != NULL) {
-        WKV_ASSERT(node->parent->n_edges > 0);
-        const struct wkv_edge_t* const edge = (const struct wkv_edge_t*)node;
-        WKV_ASSERT(edge->seg_len <= key_len);
-        p -= edge->seg_len;
-        WKV_ASSERT(p >= buf);
-        memcpy(p, edge->seg, edge->seg_len);
-        node = node->parent;
-        if (node->parent != NULL) {
-            *--p = sep;
-        }
-    }
-    WKV_ASSERT((buf[key_len] == '\0') && (p == buf) && (strlen(p) == key_len));
-    const struct wkv_str_t out = { key_len, p };
-    return out;
 }
 
 // ----------------------------------------            wkv_get_all            ----------------------------------------

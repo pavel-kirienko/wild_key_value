@@ -571,7 +571,7 @@ struct _wkv_matcher_event_t
 };
 
 /// Invoked when a wildcard match occurs, EVEN IF THE NODE IS VALUELESS.
-typedef void* (*_wkv_matcher_cb_t)(struct _wkv_matcher_t*, struct _wkv_matcher_event_t);
+typedef void* (*_wkv_matcher_cb_t)(const struct _wkv_matcher_t*, struct _wkv_matcher_event_t);
 
 struct _wkv_matcher_t
 {
@@ -588,12 +588,12 @@ struct _wkv_matcher_t
 /// One way to do this is to copy the edge pointer array on the stack before traversing it.
 /// Another solution is to bubble up the removal flag to the traversal function so that we can reuse the same
 /// index for the next iteration.
-static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
-                                     const struct wkv_node_t* const  node,
-                                     const struct wkv_str_t          pattern,
-                                     const size_t                    prefix_len,
-                                     const wkv_substitution_t* const sub_head,
-                                     wkv_substitution_t* const       sub_tail)
+static inline void* _wkv_matcher_run(const struct _wkv_matcher_t* const ctx,
+                                     const struct wkv_node_t* const     node,
+                                     const struct wkv_str_t             pattern,
+                                     const size_t                       prefix_len,
+                                     const wkv_substitution_t* const    sub_head,
+                                     wkv_substitution_t* const          sub_tail)
 {
     const struct _wkv_split_t x = _wkv_split(pattern, ctx->self->sep);
     const bool                wild_recurse =
@@ -611,11 +611,7 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
                 sub_tail->next = &sub;
             }
 
-            // Create a new event and either report it or recurse further.
-            struct _wkv_matcher_event_t evt;
-            evt.node          = &edge->node;
-            evt.key_len       = prefix_len + edge->seg_len;
-            evt.substitutions = sub_head_new;
+            const struct _wkv_matcher_event_t evt = { &edge->node, prefix_len + edge->seg_len, sub_head_new };
             if (wild_segment) {
                 if (x.last) {
                     result = ctx->cb(ctx, evt);
@@ -660,7 +656,7 @@ struct _wkv_match_context_t
     wkv_on_match_t        on_match;
 };
 
-static inline void* _wkv_match_cb_adapter(struct _wkv_matcher_t* const ctx, const struct _wkv_matcher_event_t evt)
+static inline void* _wkv_match_cb_adapter(const struct _wkv_matcher_t* const ctx, const struct _wkv_matcher_event_t evt)
 {
     void* result = NULL;
     if (evt.node->value != NULL) {
@@ -682,14 +678,9 @@ static inline void* wkv_match(struct wkv_t* const  self,
                               void* const          context,
                               const wkv_on_match_t on_match)
 {
-    struct _wkv_match_context_t ctx;
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.base.self                 = self;
-    ctx.base.wild                 = wild;
-    ctx.base.cb                   = _wkv_match_cb_adapter;
-    ctx.key_reconstruction_buffer = key_reconstruction_buffer;
-    ctx.context                   = context;
-    ctx.on_match                  = on_match;
+    const struct _wkv_match_context_t ctx = {
+        { self, wild, _wkv_match_cb_adapter }, key_reconstruction_buffer, context, on_match
+    };
     return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(pattern), 0, NULL, NULL);
 }
 

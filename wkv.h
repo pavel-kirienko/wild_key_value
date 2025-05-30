@@ -475,6 +475,12 @@ struct _wkv_matcher_t
 
 /// Matches all nodes, even valueless ones, and reports them to the callback.
 /// If you want to hand it over to the user, ensure the node is not valueless first!
+///
+/// Currently, we DO NOT support wildcard removal of nodes from the callback, for the sole reason that removal
+/// would invalidate our edges traversal state. This can be doctored, if necessary.
+/// One way to do this is to copy the edge pointer array on the stack before traversing it.
+/// Another solution is to bubble up the removal flag to the traversal function so that we can reuse the same
+/// index for the next iteration.
 static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
                                      const struct wkv_node_t* const  node,
                                      const struct wkv_str_t          query,

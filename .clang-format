@@ -13,6 +13,5 @@ AlignConsecutiveBitFields: true
 AlignConsecutiveDeclarations: true
 AlignConsecutiveMacros: true
 AlignConsecutiveShortCaseStatements: { Enabled: true }
-AlignEscapedNewlines: LeftWithLastLine
 AlignTrailingComments: true
 SortIncludes: false

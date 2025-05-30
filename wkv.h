@@ -616,11 +616,9 @@ static inline void* _wkv_matcher_descend_all(const struct _wkv_matcher_t* const 
 
         const struct _wkv_matcher_event_t evt = { &edge->node, prefix_len + edge->seg_len, sub_head_new };
         if (!recurse) {
-            if (next_seg.str == NULL) {
-                result = ctx->cb(ctx, evt);
-            } else { // key len +1 because we have a separator after the segment.
-                result = _wkv_matcher_descend(ctx, evt.node, next_seg, evt.key_len + 1, sub_head_new, &sub);
-            }
+            result = (next_seg.str == NULL)
+                       ? ctx->cb(ctx, evt)
+                       : _wkv_matcher_descend(ctx, evt.node, next_seg, evt.key_len + 1, sub_head_new, &sub);
         } else {
             WKV_ASSERT(next_seg.str == NULL);
             result = ctx->cb(ctx, evt);

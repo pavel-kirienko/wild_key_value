@@ -201,7 +201,7 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 /// 4. "xyz"
 ///
 /// If the pattern contains only non-recursive substitutions, then the number of substitutions equals the number of
-/// substition segments in the query. If a recursive substitution is present, then the number of substitutions
+/// substitution segments in the query. If a recursive substitution is present, then the number of substitutions
 /// may be greater.
 struct wkv_substitution_t
 {
@@ -213,6 +213,7 @@ struct wkv_substitution_t
 struct wkv_match_t
 {
     /// Full reconstructed key. Lifetime ends upon return from the match callback.
+    /// Iff key reconstruction is disabled, this will have a NULL str pointer and len==0.
     struct wkv_str_t key;
 
     /// Substitutions that matched the corresponding wildcards in the query.
@@ -234,11 +235,17 @@ struct wkv_match_t
 typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, struct wkv_match_t match);
 
 /// Matching elements are reported in an unspecified order.
+///
 /// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
 /// If no matches are found or on_match returns NULL for all matches, then NULL is returned.
+///
+/// key_reconstruction_buffer may be NULL if the matched keys are not of interest; otherwise, it must point
+/// to a storage of at least WKV_KEY_MAX_LEN+1 bytes. Key reconstruction adds extra processing per reported key
+/// which is linearly dependent on the key length.
 static inline void* wkv_match(struct wkv_t* const  self,
                               const char* const    pattern,
                               const char           wild,
+                              char* const          key_reconstruction_buffer,
                               void* const          context,
                               const wkv_on_match_t on_match);
 
@@ -515,7 +522,7 @@ static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* nod
 
 static inline struct wkv_node_t* _wkv_at(struct wkv_node_t* const node,
                                          size_t* const            index,
-                                         size_t                   prefix_len,
+                                         const size_t             prefix_len,
                                          size_t* const            out_key_len)
 {
     if (node->value != NULL) {
@@ -539,9 +546,9 @@ static inline struct wkv_node_t* _wkv_at(struct wkv_node_t* const node,
 
 static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const key, size_t* const key_len)
 {
-    void*                    result        = NULL;
-    size_t                   key_len_local = WKV_KEY_MAX_LEN + 1; // sentinel
-    struct wkv_node_t* const node          = _wkv_at(&self->root, &index, 0, &key_len_local);
+    void*                          result        = NULL;
+    size_t                         key_len_local = WKV_KEY_MAX_LEN + 1; // sentinel
+    const struct wkv_node_t* const node          = _wkv_at(&self->root, &index, 0, &key_len_local);
     if (node != NULL) {
         WKV_ASSERT(node->value != NULL);
         WKV_ASSERT(key_len_local <= WKV_KEY_MAX_LEN);
@@ -648,6 +655,7 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
 struct _wkv_match_context_t
 {
     struct _wkv_matcher_t base;
+    char*                 key_reconstruction_buffer;
     void*                 context;
     wkv_on_match_t        on_match;
 };
@@ -658,18 +666,11 @@ static inline void* _wkv_match_cb_adapter(struct _wkv_matcher_t* const ctx, cons
     if (evt.node->value != NULL) {
         const struct _wkv_match_context_t* const cast = (struct _wkv_match_context_t*)ctx;
         WKV_ASSERT(evt.key_len <= WKV_KEY_MAX_LEN);
-        char buf[1 +
-#ifdef __cplusplus
-                 WKV_KEY_MAX_LEN
-#else
-                 key_len
-#endif
-        ];
-        struct wkv_match_t match;
-        match.key           = _wkv_reconstruct_key(evt.node, evt.key_len, ctx->self->sep, buf);
-        match.substitutions = evt.substitutions;
-        match.value         = evt.node->value;
-        result              = cast->on_match(ctx->self, cast->context, match);
+        struct wkv_match_t match = { { NULL, 0 }, evt.substitutions, evt.node->value };
+        if (cast->key_reconstruction_buffer != NULL) {
+            match.key = _wkv_reconstruct_key(evt.node, evt.key_len, ctx->self->sep, cast->key_reconstruction_buffer);
+        }
+        result = cast->on_match(ctx->self, cast->context, match);
     }
     return result;
 }
@@ -677,16 +678,18 @@ static inline void* _wkv_match_cb_adapter(struct _wkv_matcher_t* const ctx, cons
 static inline void* wkv_match(struct wkv_t* const  self,
                               const char* const    pattern,
                               const char           wild,
+                              char* const          key_reconstruction_buffer,
                               void* const          context,
                               const wkv_on_match_t on_match)
 {
     struct _wkv_match_context_t ctx;
     memset(&ctx, 0, sizeof(ctx));
-    ctx.base.self = self;
-    ctx.base.wild = wild;
-    ctx.base.cb   = _wkv_match_cb_adapter;
-    ctx.context   = context;
-    ctx.on_match  = on_match;
+    ctx.base.self                 = self;
+    ctx.base.wild                 = wild;
+    ctx.base.cb                   = _wkv_match_cb_adapter;
+    ctx.key_reconstruction_buffer = key_reconstruction_buffer;
+    ctx.context                   = context;
+    ctx.on_match                  = on_match;
     return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(pattern), 0, NULL, NULL);
 }
 

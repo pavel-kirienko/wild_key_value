@@ -526,19 +526,21 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
             // Create a new event and either report it or recurse further.
             struct _wkv_matcher_event_t evt;
             evt.node          = &edge->node;
-            evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1); // TODO FIXME INCORRECT
+            evt.key_len       = prefix_len + edge->seg_len;
             evt.substitutions = sub_head_new;
             if (wild_segment) {
-                result = x.last //
-                           ? ctx->cb(ctx, evt)
-                           : _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len, sub_head_new, &sub);
+                if (x.last) {
+                    result = ctx->cb(ctx, evt);
+                } else { // key len +1 because we have a separator after the segment.
+                    result = _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len + 1, sub_head_new, &sub);
+                }
             } else {
                 WKV_ASSERT(x.last);
                 result = ctx->cb(ctx, evt);
                 if (result == NULL) {
                     // Note that we pass onwards the same wildcard, x.head, because it is applied recursively until end.
                     // The segment is only 2-symbols long, so we won't waste time on memchr inside the split function.
-                    result = _wkv_matcher_run(ctx, evt.node, x.head, evt.key_len, sub_head_new, &sub);
+                    result = _wkv_matcher_run(ctx, evt.node, x.head, evt.key_len + 1, sub_head_new, &sub);
                 }
             }
         }
@@ -548,10 +550,13 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
             struct wkv_edge_t* const    edge = node->edges[k];
             struct _wkv_matcher_event_t evt;
             evt.node          = &edge->node;
-            evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1);
+            evt.key_len       = prefix_len + edge->seg_len;
             evt.substitutions = sub_head;
-            result =
-              x.last ? ctx->cb(ctx, evt) : _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len, sub_head, sub_tail);
+            if (x.last) {
+                result = ctx->cb(ctx, evt);
+            } else { // key len +1 because we have a separator after the segment.
+                result = _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len + 1, sub_head, sub_tail);
+            }
         }
     }
     return result;

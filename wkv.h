@@ -186,7 +186,7 @@ struct wkv_match_t
 
     /// Substitutions that matched the corresponding wildcards in the query.
     /// NULL if there were no wildcards in the query.
-    struct wkv_substitution_t* substitutions;
+    const struct wkv_substitution_t* substitutions;
 
     /// The value associated with the key that matched the query.
     void* value;
@@ -431,11 +431,7 @@ static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
         WKV_ASSERT((size_t)k < node->n_edges);
         struct wkv_edge_t* const edge = node->edges[k];
         WKV_ASSERT((edge != NULL) && (edge->node.parent == node));
-        if (x.last) {
-            result = &edge->node;
-        } else {
-            result = _wkv_get(self, &edge->node, x.tail);
-        }
+        result = x.last ? &edge->node : _wkv_get(self, &edge->node, x.tail);
     }
     return result;
 }
@@ -456,6 +452,75 @@ static inline void* wkv_del(struct wkv_t* const self, const char* const key)
         _wkv_prune_branch(self, node);
     }
     return value;
+}
+
+// ----------------------------------------        FAST PATTERN MATCHER         ----------------------------------------
+
+struct _wkv_matcher_event_t
+{
+    struct wkv_node_t*        node;
+    size_t                    key_len;
+    const wkv_substitution_t* substitutions; ///< NULL if there are no wildcards in the query.
+};
+
+/// Invoked when a wildcard match occurs, EVEN IF THE NODE IS VALUELESS.
+typedef void* (*_wkv_matcher_cb_t)(struct _wkv_matcher_t*, struct _wkv_matcher_event_t);
+
+struct _wkv_matcher_t
+{
+    struct wkv_t*     self;
+    char              wild;
+    _wkv_matcher_cb_t cb;
+};
+
+/// Matches all nodes, even valueless ones, and reports them to the callback.
+/// If you want to hand it over to the user, ensure the node is not valueless first!
+static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
+                                     const struct wkv_node_t* const  node,
+                                     const struct wkv_str_t          query,
+                                     const size_t                    prefix_len,
+                                     const wkv_substitution_t* const sub_head,
+                                     wkv_substitution_t* const       sub_tail)
+{
+    const struct _wkv_split_t x = _wkv_split(query, ctx->self->sep);
+    const bool                wild_recurse =
+      x.last && (x.head.len == 2) && (x.head.str[0] == ctx->wild) && (x.head.str[1] == ctx->wild);
+    const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->wild);
+    void*      result       = NULL;
+    if (wild_recurse) {
+        assert(false);
+    } else if (wild_segment) {
+        for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
+            struct wkv_edge_t* const edge = node->edges[i];
+
+            // Create a new substitution for the current edge segment and link it into the list.
+            struct wkv_substitution_t        sub          = { _wkv_edge_seg(edge), NULL };
+            const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
+            if (sub_tail != NULL) {
+                sub_tail->next = &sub;
+            }
+
+            // Create a new event and either report it or recurse further.
+            struct _wkv_matcher_event_t evt;
+            evt.node          = &edge->node;
+            evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1);
+            evt.substitutions = sub_head_new;
+            result =
+              x.last ? ctx->cb(ctx, evt) : _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len, sub_head_new, &sub);
+        }
+    } else {
+        const ptrdiff_t k = _wkv_bisect(node, x.head);
+        if (k >= 0) {
+            struct wkv_edge_t* const    edge = node->edges[k];
+            struct _wkv_matcher_event_t evt;
+            evt.node          = &edge->node;
+            evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1);
+            evt.substitutions = sub_head;
+            result =
+              x.last ? ctx->cb(ctx, evt) : _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len, sub_head, sub_tail);
+        }
+    }
+    return result;
 }
 
 // ----------------------------------------       FULL KEY RECONSTRUCTOR       ----------------------------------------
@@ -488,66 +553,21 @@ static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* nod
     return out;
 }
 
-// ----------------------------------------          PATTERN MATCHER          ----------------------------------------
-
-/// Invoked when a wildcard match occurs.
-typedef void* (*_wkv_matcher_cb_t)(struct _wkv_matcher_t*, struct wkv_node_t*);
-
-struct _wkv_matcher_t
-{
-    struct wkv_t* self;
-    char          wild;
-
-    // NULL until the first substitution is added.
-    wkv_substitution_t* sub_head;
-    wkv_substitution_t* sub_tail;
-
-    _wkv_matcher_cb_t cb;
-};
-
-static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const   ctx,
-                                     const struct wkv_node_t* const node,
-                                     const struct wkv_str_t         query)
-{
-    const struct _wkv_split_t x      = _wkv_split(query, ctx->self->sep);
-    void*                     result = NULL;
-    if (x.last && (x.head.len == 2) && (x.head.str[0] == ctx->wild) && (x.head.str[1] == ctx->wild)) {
-        // Recursive wildcard placed at the end matches everything down the tree.
-        assert(false);
-    } else if ((x.head.len == 1) && (x.head.str[0] == ctx->wild)) { // Single-segment substitution.
-        assert(false);
-    } else {
-        const ptrdiff_t k = _wkv_bisect(node, x.head);
-        if (k >= 0) {
-            WKV_ASSERT((size_t)k < node->n_edges);
-            struct wkv_edge_t* const edge = node->edges[k];
-            WKV_ASSERT((edge != NULL) && (edge->node.parent == node));
-            if (x.last) {
-                result = ctx->cb(ctx, &edge->node);
-            } else {
-                result = _wkv_matcher_run(ctx, &edge->node, x.tail);
-            }
-        }
-    }
-    return result;
-}
-
 // ----------------------------------------            wkv_get_all            ----------------------------------------
 
 struct _wkv_get_all_context_t
 {
     struct _wkv_matcher_t base;
-    size_t                key_len;
     void*                 context;
     wkv_on_match_t        on_match;
 };
 
-static inline void* _wkv_get_all_cb_adapter(struct _wkv_matcher_t* const ctx, struct wkv_node_t* const node)
+static inline void* _wkv_get_all_cb_adapter(struct _wkv_matcher_t* const ctx, const struct _wkv_matcher_event_t evt)
 {
-    const struct _wkv_get_all_context_t* const cast   = (struct _wkv_get_all_context_t*)ctx;
-    void*                                      result = NULL;
-    if (node->value != NULL) {
-        WKV_ASSERT(cast->key_len <= WKV_KEY_MAX_LEN);
+    void* result = NULL;
+    if (evt.node->value != NULL) {
+        const struct _wkv_get_all_context_t* const cast = (struct _wkv_get_all_context_t*)ctx;
+        WKV_ASSERT(evt.key_len <= WKV_KEY_MAX_LEN);
         char buf[1 +
 #ifdef __cplusplus
                  WKV_KEY_MAX_LEN
@@ -556,9 +576,9 @@ static inline void* _wkv_get_all_cb_adapter(struct _wkv_matcher_t* const ctx, st
 #endif
         ];
         struct wkv_match_t match;
-        match.key           = _wkv_reconstruct_key(node, cast->key_len, ctx->self->sep, buf);
-        match.substitutions = ctx->sub_head;
-        match.value         = node->value;
+        match.key           = _wkv_reconstruct_key(evt.node, evt.key_len, ctx->self->sep, buf);
+        match.substitutions = evt.substitutions;
+        match.value         = evt.node->value;
         result              = cast->on_match(ctx->self, cast->context, match);
     }
     return result;
@@ -572,17 +592,12 @@ static inline void* wkv_get_all(struct wkv_t* const  self,
 {
     struct _wkv_get_all_context_t ctx;
     memset(&ctx, 0, sizeof(ctx));
-    ctx.base.self     = self;
-    ctx.base.wild     = wild;
-    ctx.base.sub_head = NULL;
-    ctx.base.sub_tail = NULL;
-    ctx.base.cb       = _wkv_get_all_cb_adapter;
-
-    ctx.key_len  = strnlen(query, WKV_KEY_MAX_LEN + 1); // +1 to avoid truncation
-    ctx.context  = context;
-    ctx.on_match = on_match;
-
-    return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(query));
+    ctx.base.self = self;
+    ctx.base.wild = wild;
+    ctx.base.cb   = _wkv_get_all_cb_adapter;
+    ctx.context   = context;
+    ctx.on_match  = on_match;
+    return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(query), 0, NULL, NULL);
 }
 
 #ifdef __cplusplus

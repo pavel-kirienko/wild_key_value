@@ -101,6 +101,15 @@ public:
                 s = s->next;
             }
         }
+
+        [[nodiscard]] bool check(const std::string_view          key,
+                                 const std::vector<std::string>& substitutions,
+                                 const void* const               value) const
+        {
+            return (this->key == key) && (this->substitutions.size() == substitutions.size()) &&
+                   std::equal(this->substitutions.begin(), this->substitutions.end(), substitutions.begin()) &&
+                   (this->value == value);
+        }
     };
 
     [[nodiscard]] const std::vector<Match>& get_matches() const { return matches_; }
@@ -119,7 +128,6 @@ public:
 private:
     [[nodiscard]] void* on_match(::wkv_t*, const ::wkv_match_t match)
     {
-        std::cout << "on_match: key='" << view(match.key) << "', value=" << match.value << std::endl;
         matches_.emplace_back(match);
         return nullptr;
     }
@@ -431,10 +439,11 @@ void test_get_all()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_add(&wkv, "a/b", i2ptr(0xB)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_add(&wkv, "a/b/1", i2ptr(0x1)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x2), wkv_add(&wkv, "a/b/2", i2ptr(0x2)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x100), wkv_add(&wkv, "x/b", i2ptr(0x100)));
 
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_add(&wkv, "a/c", i2ptr(0xC)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x3), wkv_add(&wkv, "a/c/3", i2ptr(0x3)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x4), wkv_add(&wkv, "a/c/4", i2ptr(0x4)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x3), wkv_add(&wkv, "a/c/1", i2ptr(0x3)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x4), wkv_add(&wkv, "a/c/2", i2ptr(0x4)));
 
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "a/d", i2ptr(0xD)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x5), wkv_add(&wkv, "a/d/5", i2ptr(0x5)));
@@ -445,7 +454,7 @@ void test_get_all()
     print(&wkv.root);
     std::cout << "Fragments: " << mem.get_fragments() << ", OOMs: " << mem.get_oom_count() << std::endl;
 
-    // Query literal match.
+    // Query literal.
     {
         MatchCollector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a", '*', &collector, MatchCollector::trampoline));
@@ -485,6 +494,61 @@ void test_get_all()
         TEST_ASSERT_EQUAL_size_t(0, collector.get_matches().size());
     }
 
+    // Query wildcard.
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(3, matches.size());
+        TEST_ASSERT(matches[0].check("a", { "a" }, i2ptr(0xA)));
+        TEST_ASSERT(matches[1].check("a1", { "a1" }, i2ptr(0xA1)));
+        TEST_ASSERT(matches[2].check("a2", { "a2" }, i2ptr(0xA2)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(3, matches.size());
+        TEST_ASSERT(matches[0].check("a/b", { "b" }, i2ptr(0xB)));
+        TEST_ASSERT(matches[1].check("a/c", { "c" }, i2ptr(0xC)));
+        TEST_ASSERT(matches[2].check("a/d", { "d" }, i2ptr(0xD)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*/b", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(2, matches.size());
+        TEST_ASSERT(matches[0].check("a/b", { "a" }, i2ptr(0xB)));
+        TEST_ASSERT(matches[1].check("x/b", { "x" }, i2ptr(0x100)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*/*/*", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(5, matches.size());
+        TEST_ASSERT(matches[0].check("a/b/1", { "a", "b", "1" }, i2ptr(0x1)));
+        TEST_ASSERT(matches[1].check("a/b/2", { "a", "b", "2" }, i2ptr(0x2)));
+        TEST_ASSERT(matches[2].check("a/c/1", { "a", "c", "1" }, i2ptr(0x3)));
+        TEST_ASSERT(matches[3].check("a/c/2", { "a", "c", "2" }, i2ptr(0x4)));
+        TEST_ASSERT(matches[4].check("a/d/5", { "a", "d", "5" }, i2ptr(0x5)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "*/c/*", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(2, matches.size());
+        TEST_ASSERT(matches[0].check("a/c/1", { "a", "1" }, i2ptr(0x3)));
+        TEST_ASSERT(matches[1].check("a/c/2", { "a", "2" }, i2ptr(0x4)));
+    }
+    {
+        MatchCollector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get_all(&wkv, "a/*/2", '*', &collector, MatchCollector::trampoline));
+        const auto& matches = collector.get_matches();
+        TEST_ASSERT_EQUAL_size_t(2, matches.size());
+        TEST_ASSERT(matches[0].check("a/b/2", { "b" }, i2ptr(0x2)));
+        TEST_ASSERT(matches[1].check("a/c/2", { "c" }, i2ptr(0x4)));
+    }
+
     // Cleanup.
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xA1), wkv_del(&wkv, "a1"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xA2), wkv_del(&wkv, "a2"));
@@ -492,9 +556,10 @@ void test_get_all()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xB), wkv_del(&wkv, "a/b"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x1), wkv_del(&wkv, "a/b/1"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x2), wkv_del(&wkv, "a/b/2"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x100), wkv_del(&wkv, "x/b"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xC), wkv_del(&wkv, "a/c"));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x3), wkv_del(&wkv, "a/c/3"));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x4), wkv_del(&wkv, "a/c/4"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x3), wkv_del(&wkv, "a/c/1"));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x4), wkv_del(&wkv, "a/c/2"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_del(&wkv, "a/d"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x5), wkv_del(&wkv, "a/d/5"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_del(&wkv, "a/d/6/e"));

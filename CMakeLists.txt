@@ -44,10 +44,12 @@ if (NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"))
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
 endif ()
 
+# UNITY
 add_library(unity STATIC ${CMAKE_CURRENT_SOURCE_DIR}/unity/unity.c)
 target_include_directories(unity SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unity)
 target_compile_definitions(unity PUBLIC -DUNITY_SHORTHAND_AS_RAW=1 -DUNITY_OUTPUT_COLOR=1)
 
+# WKV TEST
 add_executable(test_wkv ${CMAKE_CURRENT_SOURCE_DIR}/test.cpp)
 target_link_libraries(test_wkv unity)
 if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
@@ -58,6 +60,11 @@ if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug
 endif ()
 add_test("run_test" "test_wkv")
 
+# BENCHY
+add_executable(benchy ${CMAKE_CURRENT_SOURCE_DIR}/benchy.c)
+add_test("run_benchy" "benchy")
+
+# LCOV REPORT
 add_custom_target(lcov
         COMMAND lcov --directory . --capture --output-file coverage.info
         COMMAND genhtml coverage.info --output-directory coverage-html

@@ -92,6 +92,8 @@ extern "C"
 /// This can be overridden at runtime on a per-container basis.
 #define WKV_DEFAULT_SEPARATOR '/'
 
+struct wkv_t;
+
 /// Internally, Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
 /// User-supplied keys are converted to this format early.
 struct wkv_str_t
@@ -606,11 +608,13 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 
 // ----------------------------------------        FAST PATTERN MATCHER         ----------------------------------------
 
+struct _wkv_matcher_t;
+
 struct _wkv_matcher_event_t
 {
-    struct wkv_node_t*        node;
-    size_t                    key_len;
-    const wkv_substitution_t* substitutions; ///< NULL if there are no wildcards in the query.
+    struct wkv_node_t*               node;
+    size_t                           key_len;
+    const struct wkv_substitution_t* substitutions; ///< NULL if there are no wildcards in the query.
 };
 
 /// Invoked when a wildcard match occurs, EVEN IF THE NODE IS VALUELESS.
@@ -631,20 +635,20 @@ struct _wkv_matcher_t
 /// One way to do this is to copy the edge pointer array on the stack before traversing it.
 /// Another solution is to bubble up the removal flag to the traversal function so that we can reuse the same
 /// index for the next iteration.
-static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const ctx,
-                                         const struct wkv_node_t* const     node,
-                                         const struct wkv_str_t             pattern,
-                                         const size_t                       prefix_len,
-                                         const wkv_substitution_t* const    sub_head,
-                                         wkv_substitution_t* const          sub_tail);
+static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const     ctx,
+                                         const struct wkv_node_t* const         node,
+                                         const struct wkv_str_t                 pattern,
+                                         const size_t                           prefix_len,
+                                         const struct wkv_substitution_t* const sub_head,
+                                         struct wkv_substitution_t* const       sub_tail);
 
-static inline void* _wkv_matcher_descend_all(const struct _wkv_matcher_t* const ctx,
-                                             const struct wkv_node_t* const     node,
-                                             const struct wkv_str_t             next_seg,
-                                             const bool                         recurse,
-                                             const size_t                       prefix_len,
-                                             const wkv_substitution_t* const    sub_head,
-                                             wkv_substitution_t* const          sub_tail)
+static inline void* _wkv_matcher_descend_all(const struct _wkv_matcher_t* const     ctx,
+                                             const struct wkv_node_t* const         node,
+                                             const struct wkv_str_t                 next_seg,
+                                             const bool                             recurse,
+                                             const size_t                           prefix_len,
+                                             const struct wkv_substitution_t* const sub_head,
+                                             struct wkv_substitution_t* const       sub_tail)
 {
     void* result = NULL;
     for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
@@ -673,12 +677,12 @@ static inline void* _wkv_matcher_descend_all(const struct _wkv_matcher_t* const 
     return result;
 }
 
-static inline void* _wkv_matcher_descend_one(const struct _wkv_matcher_t* const ctx,
-                                             const struct wkv_node_t* const     node,
-                                             const struct _wkv_split_t          x,
-                                             const size_t                       prefix_len,
-                                             const wkv_substitution_t* const    sub_head,
-                                             wkv_substitution_t* const          sub_tail)
+static inline void* _wkv_matcher_descend_one(const struct _wkv_matcher_t* const     ctx,
+                                             const struct wkv_node_t* const         node,
+                                             const struct _wkv_split_t              x,
+                                             const size_t                           prefix_len,
+                                             const struct wkv_substitution_t* const sub_head,
+                                             struct wkv_substitution_t* const       sub_tail)
 {
     void*           result = NULL;
     const ptrdiff_t k      = _wkv_bisect(node, x.head);
@@ -695,12 +699,12 @@ static inline void* _wkv_matcher_descend_one(const struct _wkv_matcher_t* const 
     return result;
 }
 
-static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const ctx,
-                                         const struct wkv_node_t* const     node,
-                                         const struct wkv_str_t             pattern,
-                                         const size_t                       prefix_len,
-                                         const wkv_substitution_t* const    sub_head,
-                                         wkv_substitution_t* const          sub_tail)
+static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const     ctx,
+                                         const struct wkv_node_t* const         node,
+                                         const struct wkv_str_t                 pattern,
+                                         const size_t                           prefix_len,
+                                         const struct wkv_substitution_t* const sub_head,
+                                         struct wkv_substitution_t* const       sub_tail)
 {
     const struct _wkv_split_t x = _wkv_split(pattern, ctx->self->sep);
     const bool                wild_recurse =

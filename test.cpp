@@ -438,9 +438,12 @@ void test_get_all()
 
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_add(&wkv, "a/d", i2ptr(0xD)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x5), wkv_add(&wkv, "a/d/5", i2ptr(0x5)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x6), wkv_add(&wkv, "a/d/6", i2ptr(0x6)));
+    // there is no key "a/d/6", that node will be created implicitly without value.
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_add(&wkv, "a/d/6/e", i2ptr(0xE)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_add(&wkv, "a/d/6/f", i2ptr(0xF)));
+
+    print(&wkv.root);
+    std::cout << "Fragments: " << mem.get_fragments() << ", OOMs: " << mem.get_oom_count() << std::endl;
 
     // Query literal match.
     {
@@ -494,7 +497,6 @@ void test_get_all()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x4), wkv_del(&wkv, "a/c/4"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xD), wkv_del(&wkv, "a/d"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x5), wkv_del(&wkv, "a/d/5"));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x6), wkv_del(&wkv, "a/d/6"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), wkv_del(&wkv, "a/d/6/e"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_del(&wkv, "a/d/6/f"));
     TEST_ASSERT(wkv_is_empty(&wkv));

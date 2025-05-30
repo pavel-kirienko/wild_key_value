@@ -48,6 +48,7 @@ Checks: >-
   -cert-err58-cpp,
   -*-owning-memory,
   -*clang-analyzer*,
+  -*named-parameter,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*\.hpp'
 FormatStyle: file

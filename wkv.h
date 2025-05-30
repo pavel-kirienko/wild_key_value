@@ -58,6 +58,14 @@ extern "C"
 /// This can be overridden at runtime on a per-container basis.
 #define WKV_DEFAULT_SEPARATOR '/'
 
+/// Internally, Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
+/// User-supplied keys are converted to this format early.
+struct wkv_str_t
+{
+    size_t      len; ///< Length of the string, excluding the trailing NUL.
+    const char* str; ///< NUL-terminated string of length 'len'.
+};
+
 /// A fundamental invariant of WKV is that every node has EITHER a value or outgoing edges.
 struct wkv_node_t
 {
@@ -94,13 +102,69 @@ struct wkv_edge_t
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
 
-/// Internally, Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
-/// User-supplied keys are converted to this format early.
-struct wkv_str_t
+/// Once initialized, the instance shall not be moved or copied, as that breaks parent links in the tree.
+/// Hint: pointer to a node with parent=NULL is the pointer to wkv_t of the current tree.
+struct wkv_t
 {
-    size_t      len; ///< Length of the string, excluding the trailing NUL.
-    const char* str; ///< NUL-terminated string of length 'len'.
+    struct wkv_node_t root; ///< Base type.
+
+    /// Used to allocate, reallocate, and free memory for the tree nodes and edges.
+    wkv_realloc_t realloc;
+
+    /// Separator character used to split keys into segments. The default is WKV_DEFAULT_SEPARATOR.
+    /// Can be changed to any non-zero character, but it should not be changed while the container is non-empty.
+    char sep;
+
+    void* context; ///< Can be assigned by the user code arbitrarily.
 };
+
+// ----------------------------------------    INIT AND AUXILIARY FUNCTIONS    ----------------------------------------
+
+/// Use this to create a new Wild Key-Value instance. Once created, the instance must not be moved, unless empty.
+static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const context)
+{
+    struct wkv_t out;
+    memset(&out, 0, sizeof(struct wkv_t));
+    out.root.parent = NULL;
+    out.root.edges  = NULL;
+    out.root.value  = NULL;
+    out.realloc     = realloc;
+    out.sep         = WKV_DEFAULT_SEPARATOR;
+    out.context     = context;
+    return out;
+}
+
+static inline bool wkv_is_empty(const struct wkv_t* const self)
+{
+    WKV_ASSERT((self != NULL) && (self->root.value == NULL));
+    return self->root.n_edges == 0;
+}
+
+// ----------------------------------------    SET/GET/DEL, VERBATIM KEYS    ----------------------------------------
+
+/// Repeated separators are acceptable. None of the pointers are allowed to be NULL.
+/// Returns:
+/// - Value as-is on success.
+/// - If this key is already known (not unique), the value of the existing key.
+/// - NULL if out of memory or key is longer than WKV_KEY_MAX_LEN.
+/// Therefore, to check if the key is inserted successfully, compare the returned value against the original value.
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value);
+
+/// This is like wkv_add, but it overwrites the existing value if the key already exists.
+/// Returns:
+/// - Value as-is on success.
+/// - NULL if out of memory.
+static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value);
+
+/// Find a key using literal matching, without wildcards. Every character in the key is treated verbatim.
+/// NULL if no such key exists.
+static inline void* wkv_get(const struct wkv_t* const self, const char* const key);
+
+/// Removes the key using literal matching, without wildcards. Every character in the key is treated verbatim.
+/// Returns the value of the removed key if it was found, NULL if it didn't exist.
+static inline void* wkv_del(struct wkv_t* const self, const char* const key);
+
+// ----------------------------------------          WILDCARD KEY API          ----------------------------------------
 
 /// When a wildcard match occurs, the list of all segments that matched the wildcards in the query
 /// is reported using this structure. The elements are ordered in the same way as they appear in the query.
@@ -114,6 +178,7 @@ struct wkv_substitution_t
     struct wkv_substitution_t* next; ///< Next substitution in the linked list, NULL if this is the last one.
 };
 
+/// The lifetime of all pointers except value ends upon return from the match callback.
 struct wkv_match_t
 {
     /// Full reconstructed key. Lifetime ends upon return from the match callback.
@@ -138,72 +203,14 @@ struct wkv_match_t
 /// will end upon return from this function, but the value will obviously remain valid as long as the entry exists.
 typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, struct wkv_match_t match);
 
-/// Once initialized, the instance shall not be moved or copied, as that breaks parent links in the tree.
-/// Hint: pointer to a node with parent=NULL is the pointer to wkv_t of the current tree.
-struct wkv_t
-{
-    struct wkv_node_t root; ///< Base type.
-
-    /// Used to allocate, reallocate, and free memory for the tree nodes and edges.
-    wkv_realloc_t realloc;
-
-    /// Separator character used to split keys into segments. The default is WKV_DEFAULT_SEPARATOR.
-    /// Can be changed to any non-zero character, but it should not be changed while the container is non-empty.
-    char sep;
-
-    void* context; ///< Can be assigned by the user code arbitrarily.
-};
-
-/// Use this to create a new Wild Key-Value instance. Once created, the instance must not be moved, unless empty.
-static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const context)
-{
-    struct wkv_t out;
-    memset(&out, 0, sizeof(struct wkv_t));
-    out.root.parent = NULL;
-    out.root.edges  = NULL;
-    out.root.value  = NULL;
-    out.realloc     = realloc;
-    out.sep         = WKV_DEFAULT_SEPARATOR;
-    out.context     = context;
-    return out;
-}
-
-/// Repeated separators are acceptable. None of the pointers are allowed to be NULL.
-/// Returns:
-/// - Value as-is on success.
-/// - If this key is already known (not unique), the value of the existing key.
-/// - NULL if out of memory or key is longer than WKV_KEY_MAX_LEN.
-/// Therefore, to check if the key is inserted successfully, compare the returned value against the original value.
-static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value);
-
-/// This is like wkv_add, but it overwrites the existing value if the key already exists.
-/// Returns:
-/// - Value as-is on success.
-/// - NULL if out of memory.
-static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value);
-
-/// Find a key using literal matching, without wildcards. Every character in the key is treated verbatim.
-/// NULL if no such key exists.
-static inline void* wkv_get(const struct wkv_t* const self, const char* const key);
-
-/// Removes the key using literal matching, without wildcards. Every character in the key is treated verbatim.
-/// Returns the value of the removed key if it was found, NULL if it didn't exist.
-static inline void* wkv_remove(struct wkv_t* const self, const char* const key);
-
 /// Matching elements are reported in an unspecified order.
 /// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
 /// If no matches are found or on_match returns NULL for all matches, then NULL is returned.
-static inline void* wkv_match(struct wkv_t* const  self,
-                              const char* const    query,
-                              const char           wild,
-                              void* const          context,
-                              const wkv_on_match_t on_match);
-
-static inline bool wkv_is_empty(const struct wkv_t* const self)
-{
-    WKV_ASSERT((self != NULL) && (self->root.value == NULL));
-    return self->root.n_edges == 0;
-}
+static inline void* wkv_get_all(struct wkv_t* const  self,
+                                const char* const    query,
+                                const char           wild,
+                                void* const          context,
+                                const wkv_on_match_t on_match);
 
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
@@ -439,7 +446,7 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
     return (node != NULL) ? node->value : NULL;
 }
 
-static inline void* wkv_remove(struct wkv_t* const self, const char* const key)
+static inline void* wkv_del(struct wkv_t* const self, const char* const key)
 {
     struct wkv_node_t* const node  = _wkv_get(self, &self->root, _wkv_key(key));
     void*                    value = NULL;
@@ -451,8 +458,13 @@ static inline void* wkv_remove(struct wkv_t* const self, const char* const key)
     return value;
 }
 
+// ----------------------------------------       FULL KEY RECONSTRUCTOR       ----------------------------------------
+
 /// Ascend the tree and copy the full key leading to the current node into the buffer.
-static inline void _wkv_gather_key(const struct wkv_node_t* node, const size_t key_len, const char sep, char* const buf)
+static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* node,
+                                                    const size_t             key_len,
+                                                    const char               sep,
+                                                    char* const              buf)
 {
     WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
     char* p    = &buf[key_len];
@@ -472,53 +484,30 @@ static inline void _wkv_gather_key(const struct wkv_node_t* node, const size_t k
         node = node->parent;
     }
     WKV_ASSERT((buf[key_len] == '\0') && (p == buf) && (strlen(p) == key_len));
+    const struct wkv_str_t out = { key_len, p };
+    return out;
 }
 
-// ----------------------------------------       FIND ALL IMPLEMENTATION       ----------------------------------------
-// This is extracted into a separate section because it is a rather large chunk of code that is not related to the core.
+// ----------------------------------------          PATTERN MATCHER          ----------------------------------------
 
-struct _wkv_find_all_context_t
+/// Invoked when a wildcard match occurs.
+typedef void* (*_wkv_matcher_cb_t)(struct _wkv_matcher_t*, struct wkv_node_t*);
+
+struct _wkv_matcher_t
 {
     struct wkv_t* self;
-
-    size_t key_len;
-    char   wild;
+    char          wild;
 
     // NULL until the first substitution is added.
     wkv_substitution_t* sub_head;
     wkv_substitution_t* sub_tail;
 
-    void*          context;
-    wkv_on_match_t on_match;
+    _wkv_matcher_cb_t cb;
 };
 
-static inline void* _wkv_on_match_maybe(const struct _wkv_find_all_context_t* const ctx,
-                                        const struct wkv_node_t* const              node)
-{
-    void* result = NULL;
-    if (node->value != NULL) {
-        WKV_ASSERT(ctx->key_len <= WKV_KEY_MAX_LEN);
-        char buf[1 +
-#ifdef __cplusplus
-                 WKV_KEY_MAX_LEN
-#else
-                 key_len
-#endif
-        ];
-        _wkv_gather_key(node, ctx->key_len, ctx->self->sep, buf);
-        struct wkv_match_t match;
-        match.key.len       = ctx->key_len;
-        match.key.str       = buf;
-        match.substitutions = NULL; // TODO: implement substitutions
-        match.value         = node->value;
-        result              = ctx->on_match(ctx->self, ctx->context, match);
-    }
-    return result;
-}
-
-static inline void* _wkv_find_all(struct _wkv_find_all_context_t* const ctx,
-                                  const struct wkv_node_t* const        node,
-                                  const struct wkv_str_t                query)
+static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const   ctx,
+                                     const struct wkv_node_t* const node,
+                                     const struct wkv_str_t         query)
 {
     const struct _wkv_split_t x      = _wkv_split(query, ctx->self->sep);
     void*                     result = NULL;
@@ -531,37 +520,69 @@ static inline void* _wkv_find_all(struct _wkv_find_all_context_t* const ctx,
         const ptrdiff_t k = _wkv_bisect(node, x.head);
         if (k >= 0) {
             WKV_ASSERT((size_t)k < node->n_edges);
-            const struct wkv_edge_t* const edge = node->edges[k];
+            struct wkv_edge_t* const edge = node->edges[k];
             WKV_ASSERT((edge != NULL) && (edge->node.parent == node));
             if (x.last) {
-                result = _wkv_on_match_maybe(ctx, &edge->node);
+                result = ctx->cb(ctx, &edge->node);
             } else {
-                result = _wkv_find_all(ctx, &edge->node, x.tail);
+                result = _wkv_matcher_run(ctx, &edge->node, x.tail);
             }
         }
     }
     return result;
 }
 
-static inline void* wkv_match(struct wkv_t* const  self,
-                              const char* const    query,
-                              const char           wild,
-                              void* const          context,
-                              const wkv_on_match_t on_match)
+// ----------------------------------------            wkv_get_all            ----------------------------------------
+
+struct _wkv_get_all_context_t
 {
-    struct _wkv_find_all_context_t ctx;
+    struct _wkv_matcher_t base;
+    size_t                key_len;
+    void*                 context;
+    wkv_on_match_t        on_match;
+};
+
+static inline void* _wkv_get_all_cb_adapter(struct _wkv_matcher_t* const ctx, struct wkv_node_t* const node)
+{
+    const struct _wkv_get_all_context_t* const cast   = (struct _wkv_get_all_context_t*)ctx;
+    void*                                      result = NULL;
+    if (node->value != NULL) {
+        WKV_ASSERT(cast->key_len <= WKV_KEY_MAX_LEN);
+        char buf[1 +
+#ifdef __cplusplus
+                 WKV_KEY_MAX_LEN
+#else
+                 key_len
+#endif
+        ];
+        struct wkv_match_t match;
+        match.key           = _wkv_reconstruct_key(node, cast->key_len, ctx->self->sep, buf);
+        match.substitutions = ctx->sub_head;
+        match.value         = node->value;
+        result              = cast->on_match(ctx->self, cast->context, match);
+    }
+    return result;
+}
+
+static inline void* wkv_get_all(struct wkv_t* const  self,
+                                const char* const    query,
+                                const char           wild,
+                                void* const          context,
+                                const wkv_on_match_t on_match)
+{
+    struct _wkv_get_all_context_t ctx;
     memset(&ctx, 0, sizeof(ctx));
-    ctx.self = self;
+    ctx.base.self     = self;
+    ctx.base.wild     = wild;
+    ctx.base.sub_head = NULL;
+    ctx.base.sub_tail = NULL;
+    ctx.base.cb       = _wkv_get_all_cb_adapter;
 
-    ctx.key_len = strnlen(query, WKV_KEY_MAX_LEN);
-    ctx.wild    = wild;
-
-    ctx.sub_head = NULL;
-    ctx.sub_tail = NULL;
-
+    ctx.key_len  = strnlen(query, WKV_KEY_MAX_LEN + 1); // +1 to avoid truncation
     ctx.context  = context;
     ctx.on_match = on_match;
-    return _wkv_find_all(&ctx, &self->root, _wkv_key(query));
+
+    return _wkv_matcher_run(&ctx.base, &self->root, _wkv_key(query));
 }
 
 #ifdef __cplusplus

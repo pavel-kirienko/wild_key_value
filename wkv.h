@@ -1,7 +1,34 @@
 /// Source: https://github.com/pavel-kirienko/wild_key_value
 ///
-/// See also:
+/// Wild Key-Value (WKV) is a very fast and very simple key-value container for embedded systems
+/// that supports wildcard lookup. The keys are strings, and the values are user-provided void pointers.
+/// Keys are stored in the heap in fragments; common prefixes are deduplicated.
+/// The container is designed for very fast logarithmic lookup and insertion, and is extremely frugal with memory.
+/// The recommended memory manager is O1Heap, which offers low worst-case fragmentation and constant allocation time.
 ///
+/// Basic usage:
+///
+///     wkv_t kv = wkv_init(realloc_function);
+///
+///     // Set some keys:
+///     void* val = wkv_set(&kv, "foo/bar", my_bar);
+///     if (val == nullptr) { /* OOM or key too long */ }
+///     val = wkv_set(&kv, "foo/baz", my_baz);
+///     if (val == nullptr) { ... }
+///     assert(wkv_get(&kv, "foo/bar") == my_bar);
+///
+///     // Overwrite a key:
+///     void* val = wkv_set(&kv, "foo/bar", my_zoo);
+///     if (val == nullptr) { /* Key did not exist and insertion caused OOM, or key too long */ }
+///     assert(wkv_get(&kv, "foo/bar") == my_zoo);
+///
+///     // Erase a key:
+///     void* val = wkv_set(&kv, "foo/bar", nullptr);
+///     if (val == nullptr) { /* Key did not exist */ }
+///     else { /* Key existed and was erased; its old value is returned. */ }
+///
+/// See also:
+/// - Cavl <https://github.com/pavel-kirienko/cavl> -- a single-header, efficient and robust AVL tree implementation.
 /// - O1Heap <https://github.com/pavel-kirienko/o1heap> -- a deterministic memory manager for hard-real-time
 ///   high-integrity embedded systems.
 ///
@@ -121,7 +148,7 @@ struct wkv_t
 // ----------------------------------------    INIT AND AUXILIARY FUNCTIONS    ----------------------------------------
 
 /// Use this to create a new Wild Key-Value instance. Once created, the instance must not be moved, unless empty.
-static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const context)
+static inline struct wkv_t wkv_init(const wkv_realloc_t realloc)
 {
     struct wkv_t out;
     memset(&out, 0, sizeof(struct wkv_t));
@@ -130,7 +157,7 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc, void* const con
     out.root.value  = NULL;
     out.realloc     = realloc;
     out.sep         = WKV_DEFAULT_SEPARATOR;
-    out.context     = context;
+    out.context     = NULL;
     return out;
 }
 
@@ -142,31 +169,27 @@ static inline bool wkv_is_empty(const struct wkv_t* const self)
 
 // ----------------------------------------    SET/GET/DEL, VERBATIM KEYS    ----------------------------------------
 
-/// Repeated separators are acceptable. None of the pointers are allowed to be NULL.
+/// If the key is non-NULL, a new entry is created with the specified key and value, unless one already exists.
+/// If the key is NULL, the item with this key will be removed from the container; no effect if the key does not exist.
 /// Returns:
-/// - Value as-is on success.
+/// - On insertion: value as-is on success; on removal: old value on success, or NULL if the key did not exist.
 /// - If this key is already known (not unique), the value of the existing key.
 /// - NULL if out of memory or key is longer than WKV_KEY_MAX_LEN.
 /// Therefore, to check if the key is inserted successfully, compare the returned value against the original value.
-/// Complexity logarithmic in the number of keys in the container.
+/// Complexity is logarithmic in the number of keys in the container.
 static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value);
 
 /// This is like wkv_add, but it overwrites the existing value if the key already exists.
+/// Removal on NULL value works the same as in wkv_add.
 /// Returns:
-/// - Value as-is on success.
+/// - On insertion: value as-is on success; on removal: old value on success, or NULL if the key did not exist.
 /// - NULL if out of memory.
-/// Complexity logarithmic in the number of keys in the container.
 static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value);
 
 /// Find a key using literal matching (without wildcards). Every character in the key is treated verbatim.
 /// NULL if no such key exists.
-/// Complexity logarithmic in the number of keys in the container.
+/// Complexity is logarithmic in the number of keys in the container.
 static inline void* wkv_get(const struct wkv_t* const self, const char* const key);
-
-/// Removes the key using literal matching (without wildcards). Every character in the key is treated verbatim.
-/// Returns the value of the removed key if it was found, NULL if it didn't exist.
-/// Complexity logarithmic in the number of keys in the container.
-static inline void* wkv_del(struct wkv_t* const self, const char* const key);
 
 /// Returns the value and key of the element at the specified index in an unspecified order.
 ///
@@ -438,28 +461,6 @@ static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, const str
     return n;
 }
 
-static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value)
-{
-    struct wkv_node_t* const n = _wkv_insert(self, _wkv_key(key));
-    if (n != NULL) {
-        if (n->value == NULL) {
-            n->value = value; // Assign the value only if this is a new key.
-        }
-        return n->value;
-    }
-    return NULL;
-}
-
-static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value)
-{
-    struct wkv_node_t* const n = _wkv_insert(self, _wkv_key(key));
-    if (n != NULL) {
-        n->value = value; // Assign the value regardless of whether this is a new key or not.
-        return n->value;
-    }
-    return NULL;
-}
-
 static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
                                           const struct wkv_node_t* const node,
                                           const struct wkv_str_t         key)
@@ -476,15 +477,9 @@ static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
     return result;
 }
 
-static inline void* wkv_get(const struct wkv_t* const self, const char* const key)
+static inline void* _wkv_del(struct wkv_t* const self, const struct wkv_str_t key)
 {
-    const struct wkv_node_t* const node = _wkv_get(self, &self->root, _wkv_key(key));
-    return (node != NULL) ? node->value : NULL;
-}
-
-static inline void* wkv_del(struct wkv_t* const self, const char* const key)
-{
-    struct wkv_node_t* const node  = _wkv_get(self, &self->root, _wkv_key(key));
+    struct wkv_node_t* const node  = _wkv_get(self, &self->root, key);
     void*                    value = NULL;
     if (node != NULL) {
         value       = node->value;
@@ -492,6 +487,47 @@ static inline void* wkv_del(struct wkv_t* const self, const char* const key)
         _wkv_prune_branch(self, node);
     }
     return value;
+}
+
+static inline void* wkv_add(struct wkv_t* const self, const char* const key, void* const value)
+{
+    const struct wkv_str_t k      = _wkv_key(key);
+    void*                  result = NULL;
+    if (value != NULL) {
+        struct wkv_node_t* const n = _wkv_insert(self, k);
+        if (n != NULL) {
+            if (n->value == NULL) {
+                n->value = value; // Assign the value only if this is a new key.
+            }
+            result = n->value;
+        }
+    } else {
+        result = _wkv_del(self, k);
+    }
+    return result;
+}
+
+static inline void* wkv_set(struct wkv_t* const self, const char* const key, void* const value)
+{
+    const struct wkv_str_t k      = _wkv_key(key);
+    void*                  result = NULL;
+    if (value != NULL) {
+        struct wkv_node_t* const n = _wkv_insert(self, k);
+        if (n != NULL) {
+            n->value = value; // Assign the value regardless of whether this is a new key or not.
+            result   = n->value;
+        }
+    } else {
+        result = _wkv_del(self, k);
+    }
+    return result;
+}
+
+static inline void* wkv_get(const struct wkv_t* const self, const char* const key)
+{
+    const struct wkv_str_t         k    = _wkv_key(key);
+    const struct wkv_node_t* const node = _wkv_get(self, &self->root, k);
+    return (node != NULL) ? node->value : NULL;
 }
 
 /// Ascend the tree and copy the full key leading to the current node into the buffer.
@@ -598,7 +634,7 @@ static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const ctx,
 static inline void* _wkv_matcher_descend_all(const struct _wkv_matcher_t* const ctx,
                                              const struct wkv_node_t* const     node,
                                              const struct wkv_str_t             next_seg,
-                                             bool                               recurse,
+                                             const bool                         recurse,
                                              const size_t                       prefix_len,
                                              const wkv_substitution_t* const    sub_head,
                                              wkv_substitution_t* const          sub_tail)

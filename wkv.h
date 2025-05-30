@@ -1,8 +1,8 @@
 /// Source: https://github.com/pavel-kirienko/wild_key_value
 ///
-/// Wild Key-Value (WKV) is a very fast and very simple key-value container for embedded systems
-/// that supports wildcard lookup. The keys are strings, and the values are user-provided void pointers.
-/// Keys are stored in the heap in fragments; common prefixes are deduplicated.
+/// Wild Key-Value (WKV) is a very fast and very simple single-header key-value container for embedded systems
+/// that supports wildcard lookup. The keys are strings, and the values are void pointers.
+/// Keys are stored in the heap in fragments; common prefixes are deduplicated so the memory usage is minimized.
 /// The container is designed for very fast logarithmic lookup and insertion, and is extremely frugal with memory.
 /// The recommended memory manager is O1Heap, which offers low worst-case fragmentation and constant allocation time.
 ///
@@ -21,6 +21,13 @@
 ///     void* val = wkv_set(&kv, "foo/bar", my_zoo);
 ///     if (val == nullptr) { /* Key did not exist and insertion caused OOM, or key too long */ }
 ///     assert(wkv_get(&kv, "foo/bar") == my_zoo);
+///
+///     // Access keys by index in an unspecified order:
+///     char key_buf[WKV_KEY_MAX_LEN + 1];
+///     size_t key_len = sizeof(key_buf);
+///     void* val = wkv_at(&kv, 0, key_buf, &key_len);
+///     if (val == nullptr) { /* Index out of range. */ }
+///     else { /* Key is in key_buf, its value is in val. */ }
 ///
 ///     // Erase a key:
 ///     void* val = wkv_set(&kv, "foo/bar", nullptr);

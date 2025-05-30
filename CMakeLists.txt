@@ -47,4 +47,18 @@ target_compile_definitions(unity PUBLIC -DUNITY_SHORTHAND_AS_RAW=1 -DUNITY_OUTPU
 
 add_executable(test_wkv ${CMAKE_CURRENT_SOURCE_DIR}/test.cpp)
 target_link_libraries(test_wkv unity)
+if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    message(STATUS "Enabling code coverage")
+    target_compile_options(test_wkv PRIVATE -fprofile-arcs -ftest-coverage -g -O0 --coverage)
+    target_link_options(test_wkv PRIVATE -fprofile-arcs -ftest-coverage --coverage)
+    target_link_libraries(test_wkv gcov)
+endif ()
 add_test("run_test" "test_wkv")
+
+add_custom_target(lcov
+        COMMAND lcov --directory . --capture --output-file coverage.info
+        COMMAND genhtml coverage.info --output-directory coverage-html
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        DEPENDS test_wkv
+        COMMENT "+++ COVERAGE REPORT: ${CMAKE_BINARY_DIR}/coverage-html/index.html"
+)

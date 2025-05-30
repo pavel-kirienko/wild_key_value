@@ -228,7 +228,7 @@ void test_backtrack()
     {
         Memory mem(1);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a", i2ptr(0xA)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_set(&wkv, "a", i2ptr(0xA)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(1, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));
@@ -246,7 +246,7 @@ void test_backtrack()
     {
         Memory mem(2);
         wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, "a/b", i2ptr(0xB)));
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_set(&wkv, "a/b", i2ptr(0xB)));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&wkv));

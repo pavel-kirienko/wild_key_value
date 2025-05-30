@@ -353,10 +353,6 @@ static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t
 
 static inline struct wkv_node_t* _wkv_insert(struct wkv_t* const self, const struct wkv_str_t key)
 {
-    if ((self == NULL) || (self->sep == '\0')) {
-        WKV_ASSERT(false);
-        return NULL;
-    }
     if (key.len > WKV_KEY_MAX_LEN) {
         return NULL;
     }
@@ -421,10 +417,6 @@ static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
                                           const struct wkv_node_t* const node,
                                           const struct wkv_str_t         key)
 {
-    if ((self == NULL) || (self->sep == '\0')) {
-        WKV_ASSERT(false);
-        return NULL;
-    }
     struct wkv_node_t*        result = NULL;
     const struct _wkv_split_t x      = _wkv_split(key, self->sep);
     const ptrdiff_t           k      = _wkv_bisect(node, x.head);
@@ -482,12 +474,21 @@ static inline void _wkv_gather_key(const struct wkv_node_t* node, const size_t k
     WKV_ASSERT((buf[key_len] == '\0') && (p == buf) && (strlen(p) == key_len));
 }
 
+// ----------------------------------------       FIND ALL IMPLEMENTATION       ----------------------------------------
+// This is extracted into a separate section because it is a rather large chunk of code that is not related to the core.
+
 struct _wkv_find_all_context_t
 {
-    struct wkv_t*  self;
-    size_t         key_len;
+    struct wkv_t* self;
+
+    size_t key_len;
+    char   wild;
+
+    // NULL until the first substitution is added.
+    wkv_substitution_t* sub_head;
+    wkv_substitution_t* sub_tail;
+
     void*          context;
-    char           wild;
     wkv_on_match_t on_match;
 };
 
@@ -548,15 +549,17 @@ static inline void* wkv_match(struct wkv_t* const  self,
                               void* const          context,
                               const wkv_on_match_t on_match)
 {
-    if ((self == NULL) || (query == NULL) || (self->sep == '\0') || (wild == '\0') || (on_match == NULL)) {
-        WKV_ASSERT(false);
-        return NULL;
-    }
     struct _wkv_find_all_context_t ctx;
-    ctx.self     = self;
-    ctx.key_len  = strnlen(query, WKV_KEY_MAX_LEN);
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.self = self;
+
+    ctx.key_len = strnlen(query, WKV_KEY_MAX_LEN);
+    ctx.wild    = wild;
+
+    ctx.sub_head = NULL;
+    ctx.sub_tail = NULL;
+
     ctx.context  = context;
-    ctx.wild     = wild;
     ctx.on_match = on_match;
     return _wkv_find_all(&ctx, &self->root, _wkv_key(query));
 }

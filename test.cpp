@@ -4,6 +4,7 @@
 #include <unity.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <algorithm>
@@ -36,6 +37,7 @@ public:
         fragments_cap_ = fragments_cap;
     }
 
+    // ReSharper disable once CppParameterMayBeConstPtrOrRef
     [[nodiscard]] static void* trampoline_realloc(wkv_t* const self, void* const ptr, const std::size_t new_size)
     {
         return static_cast<Memory*>(self->context)->realloc(ptr, new_size);
@@ -166,6 +168,48 @@ void test_basic()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0xF), wkv_remove(&wkv, "/foo/bar/baz"));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_remove(&wkv, ""));
 
+    TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
+    TEST_ASSERT(wkv_is_empty(&wkv));
+}
+
+void test_long_keys()
+{
+    Memory mem(50);
+    wkv_t  wkv = wkv_init(Memory::trampoline_realloc, &mem);
+
+    char long_boy[WKV_KEY_MAX_LEN + 2];
+    std::memset(long_boy, 'a', WKV_KEY_MAX_LEN);
+    long_boy[WKV_KEY_MAX_LEN]     = 0;
+    long_boy[WKV_KEY_MAX_LEN + 1] = 0;
+
+    // Insert max length key successfully.
+    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN, std::strlen(long_boy));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_add(&wkv, long_boy, i2ptr(0x10)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_add(&wkv, long_boy, i2ptr(0x11))); // already exists
+    TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
+    TEST_ASSERT(!wkv_is_empty(&wkv));
+
+    // Insert longer key, which should fail.
+    long_boy[WKV_KEY_MAX_LEN] = 'a';
+    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_add(&wkv, long_boy, i2ptr(0x12)));
+    TEST_ASSERT_EQUAL_size_t(1, count(&wkv));
+    TEST_ASSERT(!wkv_is_empty(&wkv));
+
+    // Now, request a key that is too long.
+    // If it were to be truncated, it would match the valid long key, which must not happen.
+    long_boy[WKV_KEY_MAX_LEN] = 'a';
+    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_get(&wkv, long_boy));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_remove(&wkv, long_boy));
+    TEST_ASSERT_EQUAL_size_t(1, count(&wkv)); // still there!
+    TEST_ASSERT(!wkv_is_empty(&wkv));
+
+    // Cleanup.
+    long_boy[WKV_KEY_MAX_LEN] = 0;
+    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN, std::strlen(long_boy));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_get(&wkv, long_boy));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x10), wkv_remove(&wkv, long_boy));
     TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
     TEST_ASSERT(wkv_is_empty(&wkv));
 }
@@ -327,6 +371,7 @@ int main(const int argc, const char* const argv[])
     // NOLINTBEGIN(misc-include-cleaner)
     UNITY_BEGIN();
     RUN_TEST(test_basic);
+    RUN_TEST(test_long_keys);
     RUN_TEST(test_backtrack);
     RUN_TEST(test_gather_key);
     return UNITY_END();

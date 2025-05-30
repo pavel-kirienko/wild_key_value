@@ -168,10 +168,13 @@ static inline void* wkv_del(struct wkv_t* const self, const char* const key);
 
 /// When a wildcard match occurs, the list of all segments that matched the wildcards in the query
 /// is reported using this structure. The elements are ordered in the same way as they appear in the query.
-/// For example, wildcard "/abc/*/def/**" matching "/abc/123/def/foo/456" produces the following substitution list:
+/// For example, pattern "/abc/*/def/**" matching "/abc/123/def/foo/456" produces the following substitution list:
 /// 1. "123"
-/// 2. "foo/456"
-/// The length of the list equals the number of wildcards in the query.
+/// 2. "foo"
+/// 3. "456"
+/// If the pattern contains only non-recursive substitutions, then the number of substitutions equals the number of
+/// substition symbols in the query. If a recursive substitution is present, then the number of substitutions
+/// may be greater.
 struct wkv_substitution_t
 {
     struct wkv_str_t           str;  ///< The string that matched the wildcard in the query is the base type.
@@ -194,9 +197,8 @@ struct wkv_match_t
 
 /// Invoked on every wildcard match while searching. The value is guaranteed to be non-NULL.
 ///
-/// Accepts not only the value but also the full key that matched the query.
-/// TODO: pass substitutions that matched the wildcards in the query:
-/// "/abc/123/def/foo/456" matching "/abc/*/def/**" produces "123" and "foo/456".
+/// Accepts not only the value but also the full key that matched the query,
+/// plus substitutions that matched the wildcards in the query.
 ///
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
 /// The full key of the found match will be constructed on stack ad-hoc, so the lifetime of the key pointer
@@ -493,9 +495,7 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
       x.last && (x.head.len == 2) && (x.head.str[0] == ctx->wild) && (x.head.str[1] == ctx->wild);
     const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->wild);
     void*      result       = NULL;
-    if (wild_recurse) {
-        assert(false);
-    } else if (wild_segment) {
+    if (wild_segment || wild_recurse) {
         for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
             struct wkv_edge_t* const edge = node->edges[i];
 
@@ -511,8 +511,19 @@ static inline void* _wkv_matcher_run(struct _wkv_matcher_t* const    ctx,
             evt.node          = &edge->node;
             evt.key_len       = prefix_len + edge->seg_len + (x.last ? 0 : 1);
             evt.substitutions = sub_head_new;
-            result =
-              x.last ? ctx->cb(ctx, evt) : _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len, sub_head_new, &sub);
+            if (wild_segment) {
+                result = x.last //
+                           ? ctx->cb(ctx, evt)
+                           : _wkv_matcher_run(ctx, evt.node, x.tail, evt.key_len, sub_head_new, &sub);
+            } else {
+                WKV_ASSERT(x.last);
+                result = ctx->cb(ctx, evt);
+                if (result == NULL) {
+                    // Note that we pass onwards the same wildcard, x.head, because it is applied recursively until end.
+                    // The segment is only 2-symbols long, so we won't waste time on memchr inside the split function.
+                    result = _wkv_matcher_run(ctx, evt.node, x.head, evt.key_len, sub_head_new, &sub);
+                }
+            }
         }
     } else {
         const ptrdiff_t k = _wkv_bisect(node, x.head);

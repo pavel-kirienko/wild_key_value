@@ -2,6 +2,7 @@
   <dictionary name="project">
     <words>
       <w>kirienko</w>
+      <w>memchr</w>
       <w>nolintbegin</w>
       <w>nolintend</w>
       <w>segbuf</w>

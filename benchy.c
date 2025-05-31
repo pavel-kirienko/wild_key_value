@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
-#include <string.h>
 #include <time.h>
 
 #define WKV_NO_ASSERT   1
@@ -14,7 +13,7 @@
 #include "wkv.h"
 
 #define ITERS 100000U
-static const char ALPHABET[] = "abcd";
+static const char ALPHABET[] = "abc";
 
 static void* std_realloc(struct wkv_t* const self, void* const ptr, const size_t new_size)
 {
@@ -26,7 +25,7 @@ static void* std_realloc(struct wkv_t* const self, void* const ptr, const size_t
     return NULL;
 }
 
-static char* make_random_key(const size_t idx, const size_t segment_len, const size_t n_segments)
+static char* make_random_key(const size_t idx, const size_t n_segments)
 {
     char* const key = malloc(WKV_KEY_MAX_LEN + 1U);
     if (!key) {
@@ -34,12 +33,15 @@ static char* make_random_key(const size_t idx, const size_t segment_len, const s
         exit(EXIT_FAILURE);
     }
 
-    char* p = key;
+    size_t segment_len_max = n_segments + 1;
+    char*  p               = key;
     for (unsigned seg = 0; seg < n_segments; ++seg) {
+        const size_t segment_len = (rand() % segment_len_max) + 1;
         for (unsigned c = 0; c < segment_len; ++c) {
             *p++ = ALPHABET[rand() % (sizeof ALPHABET - 1U)];
         }
-        *p++ = '/';
+        segment_len_max = (segment_len_max > 1) ? (segment_len_max - 1) : 1;
+        *p++            = '/';
     }
     sprintf(p, "%zu", idx); // Append the index to ensure uniqueness
     return key;
@@ -80,7 +82,7 @@ int main(int argc, char* argv[])
     fprintf(stderr, "Preparing the test with %lu keys...\n", key_count);
     char* keys[key_count];
     for (size_t i = 0; i < key_count; ++i) {
-        keys[i] = make_random_key(i, (size_t)round(log10(key_count)), 4);
+        keys[i] = make_random_key(i, (size_t)round(log10(key_count)));
     }
     struct wkv_t kv = wkv_init(std_realloc);
 
@@ -128,10 +130,8 @@ int main(int argc, char* argv[])
     const double t_read = now() - t0;
     (void)sink;
 
-    // Visualize the tree.
-    if (key_count < 500) {
-        print_tree(&kv.root, 0);
-    }
+    // Visualize the tree before deletion.
+    print_tree(&kv.root, 0);
 
     // ------------------------------------------------------------------
     // 5. Benchmark delete (erase), existing and non-existing keys

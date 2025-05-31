@@ -79,18 +79,18 @@ private:
     return (str.len > 0) ? std::string_view(str.str, str.len) : std::string_view("");
 }
 
-class MatchCollector final
+class Collector final
 {
 public:
-    struct Match
+    struct Hit
     {
         std::string              key;
         std::vector<std::string> substitutions;
         void*                    value = nullptr;
 
-        explicit Match(const ::wkv_match_t& match) : key(view(match.key)), value(match.value)
+        explicit Hit(const ::wkv_hit_t& hit) : key(view(hit.key)), value(hit.value)
         {
-            const ::wkv_substitution_t* s = match.substitutions;
+            const ::wkv_substitution_t* s = hit.substitutions;
             while (s != nullptr) {
                 substitutions.emplace_back(view(s->str));
                 s = s->next;
@@ -119,27 +119,27 @@ public:
         }
     };
 
-    [[nodiscard]] const std::vector<Match>& get_matches() const { return matches_; }
+    [[nodiscard]] const std::vector<Hit>& get_matches() const { return matches_; }
 
-    [[nodiscard]] const Match& get_only() const
+    [[nodiscard]] const Hit& get_only() const
     {
         TEST_ASSERT_EQUAL_size_t(1, matches_.size());
         return matches_.front();
     }
 
-    [[nodiscard]] static void* trampoline(::wkv_t* const self, void* const context, const ::wkv_match_t match)
+    [[nodiscard]] static void* trampoline(::wkv_t* const self, void* const context, const ::wkv_hit_t hit)
     {
-        return static_cast<MatchCollector*>(context)->on_match(self, match);
+        return static_cast<Collector*>(context)->on_match(self, hit);
     }
 
 private:
-    [[nodiscard]] void* on_match(::wkv_t*, const ::wkv_match_t match)
+    [[nodiscard]] void* on_match(::wkv_t*, const ::wkv_hit_t hit)
     {
-        matches_.emplace_back(match);
+        matches_.emplace_back(hit);
         return nullptr;
     }
 
-    std::vector<Match> matches_;
+    std::vector<Hit> matches_;
 };
 
 void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
@@ -305,10 +305,10 @@ void test_long_keys()
     TEST_ASSERT(!wkv_is_empty(&wkv));
 
     // Wildcard query with a long key.
-    MatchCollector collector;
+    Collector collector;
     long_boy[WKV_KEY_MAX_LEN] = 'a';
     TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
-    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, long_boy, '*', nullptr, &collector, MatchCollector::trampoline));
+    TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, long_boy, nullptr, &collector, Collector::trampoline));
 
     // Cleanup.
     long_boy[WKV_KEY_MAX_LEN] = 0;
@@ -411,7 +411,7 @@ void test_backtrack()
     }
 }
 
-void test_reconstruct_key()
+void test_reconstruct()
 {
     Memory mem(50);
     wkv_t  wkv  = wkv_init(Memory::trampoline);
@@ -428,37 +428,37 @@ void test_reconstruct_key()
 
     const ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, { 4, "xx/a" });
     TEST_ASSERT(n->value == i2ptr(0xA));
-    _wkv_reconstruct_key(n, 4, wkv.sep, buf);
+    _wkv_reconstruct(n, 4, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx/a", buf);
 
     n = _wkv_get(&wkv, &wkv.root, { 5, "xx//b" });
     TEST_ASSERT(n->value == i2ptr(0xB));
-    _wkv_reconstruct_key(n, 5, wkv.sep, buf);
+    _wkv_reconstruct(n, 5, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx//b", buf);
 
     n = _wkv_get(&wkv, &wkv.root, { 0, "" });
     TEST_ASSERT(n->value == i2ptr(0xC));
-    _wkv_reconstruct_key(n, 0, wkv.sep, buf);
+    _wkv_reconstruct(n, 0, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("", buf);
 
     n = _wkv_get(&wkv, &wkv.root, { 1, "/" });
     TEST_ASSERT(n->value == i2ptr(0xD));
-    _wkv_reconstruct_key(n, 1, wkv.sep, buf);
+    _wkv_reconstruct(n, 1, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/", buf);
 
     n = _wkv_get(&wkv, &wkv.root, { 1, "e" });
     TEST_ASSERT(n->value == i2ptr(0xE));
-    _wkv_reconstruct_key(n, 1, wkv.sep, buf);
+    _wkv_reconstruct(n, 1, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("e", buf);
 
     n = _wkv_get(&wkv, &wkv.root, { 7, "/xx//f/" });
     TEST_ASSERT(n->value == i2ptr(0xF));
-    _wkv_reconstruct_key(n, 7, wkv.sep, buf);
+    _wkv_reconstruct(n, 7, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/xx//f/", buf);
 
     n = _wkv_get(&wkv, &wkv.root, { 2, "//" });
     TEST_ASSERT(n->value == i2ptr(0x1));
-    _wkv_reconstruct_key(n, 2, wkv.sep, buf);
+    _wkv_reconstruct(n, 2, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("//", buf);
 
     // cleanup
@@ -506,49 +506,48 @@ void test_match()
     // Query literal.
     char key_buf[WKV_KEY_MAX_LEN + 1];
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA), collector.get_only().value);
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a1", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a1", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a1", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA1), collector.get_only().value);
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a2", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a2", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a2", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xA2), collector.get_only().value);
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr,
-                              wkv_match(&wkv, "a/d/6/e", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/6/e", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_STRING("a/d/6/e", collector.get_only().key.c_str());
         TEST_ASSERT_EQUAL_size_t(0, collector.get_only().substitutions.size());
         TEST_ASSERT_EQUAL_PTR(i2ptr(0xE), collector.get_only().value);
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/6/", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/6/", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(0, collector.get_matches().size());
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(0, collector.get_matches().size());
     }
 
     // Query non-recursive substitution.
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
         TEST_ASSERT(matches[0].check("a", { "a" }, i2ptr(0xA)));
@@ -556,8 +555,8 @@ void test_match()
         TEST_ASSERT(matches[2].check("a2", { "a2" }, i2ptr(0xA2)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
         TEST_ASSERT(matches[0].check("a/b", { "b" }, i2ptr(0xB)));
@@ -565,16 +564,16 @@ void test_match()
         TEST_ASSERT(matches[2].check("a/d", { "d" }, i2ptr(0xD)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/b", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/b", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b", { "a" }, i2ptr(0xB)));
         TEST_ASSERT(matches[1].check("x/b", { "x" }, i2ptr(0x100)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/*/*", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/*/*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(5, matches.size());
         TEST_ASSERT(matches[0].check("a/b/1", { "a", "b", "1" }, i2ptr(0x1)));
@@ -584,16 +583,16 @@ void test_match()
         TEST_ASSERT(matches[4].check("a/d/5", { "a", "d", "5" }, i2ptr(0x5)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/c/*", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/c/*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/c/1", { "a", "1" }, i2ptr(0x3)));
         TEST_ASSERT(matches[1].check("a/c/2", { "a", "2" }, i2ptr(0x4)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/2", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/2", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b/2", { "b" }, i2ptr(0x2)));
@@ -602,16 +601,16 @@ void test_match()
 
     // Query recursive substitution.
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/b/**", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/b/**", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/b/1", { "1" }, i2ptr(0x1)));
         TEST_ASSERT(matches[1].check("a/b/2", { "2" }, i2ptr(0x2)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/**", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/**", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
         TEST_ASSERT(matches[0].check("a/d/5", { "5" }, i2ptr(0x5)));
@@ -619,29 +618,27 @@ void test_match()
         TEST_ASSERT(matches[2].check("a/d/6/f", { "6", "f" }, i2ptr(0xF)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(14, matches.size()); // everything is matched
         for (const auto& m : matches) {
-            // std::cout << "Match: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
+            // std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
             TEST_ASSERT(m.value != nullptr);
             TEST_ASSERT(m.join_substitutions() == m.key);
         }
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr,
-                              wkv_match(&wkv, "a/*/6/**", '*', key_buf, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/6/**", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("a/d/6/e", { "d", "e" }, i2ptr(0xE)));
         TEST_ASSERT(matches[1].check("a/d/6/f", { "d", "f" }, i2ptr(0xF)));
     }
     {
-        MatchCollector collector;
-        TEST_ASSERT_EQUAL_PTR(nullptr,
-                              wkv_match(&wkv, "a/*/6/**", '*', nullptr, &collector, MatchCollector::trampoline));
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/6/**", nullptr, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
         TEST_ASSERT(matches[0].check("", { "d", "e" }, i2ptr(0xE)));
@@ -685,7 +682,7 @@ int main(const int argc, const char* const argv[])
     RUN_TEST(test_basic);
     RUN_TEST(test_long_keys);
     RUN_TEST(test_backtrack);
-    RUN_TEST(test_reconstruct_key);
+    RUN_TEST(test_reconstruct);
     RUN_TEST(test_match);
     RUN_TEST(test_empty_key);
     return UNITY_END();

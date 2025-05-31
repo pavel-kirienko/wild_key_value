@@ -105,12 +105,16 @@ extern "C"
 
 // ----------------------------------------         PUBLIC API SECTION         ----------------------------------------
 
+/// The default maximum key length is chosen rather arbitrarily. It does not affect the memory consumption or
+/// performance within the container, but it is needed to enforce memory safety applying strlen on the input C strings,
+/// and also it may be used by the application to allocate static key reconstruction buffers.
 #ifndef WKV_KEY_MAX_LEN
-#define WKV_KEY_MAX_LEN 1024U
+#define WKV_KEY_MAX_LEN 256U
 #endif
 
-/// This can be overridden at runtime on a per-container basis.
-#define WKV_DEFAULT_SEPARATOR '/'
+/// These can be overridden at runtime on a per-container basis.
+#define WKV_DEFAULT_SEPARATOR   '/'
+#define WKV_DEFAULT_SUBSTITUTOR '*'
 
 struct wkv_t;
 
@@ -171,6 +175,10 @@ struct wkv_t
     /// Can be changed to any non-zero character, but it should not be changed while the container is non-empty.
     char sep;
 
+    /// Substitution character used in pattern matching. The default is WKV_DEFAULT_SUBSTITUTOR.
+    /// Can be changed to any non-zero character at any moment.
+    char sub;
+
     void* context; ///< Can be assigned by the user code arbitrarily.
 };
 
@@ -186,6 +194,7 @@ static inline struct wkv_t wkv_init(const wkv_realloc_t realloc)
     out.root.value  = NULL;
     out.realloc     = realloc;
     out.sep         = WKV_DEFAULT_SEPARATOR;
+    out.sub         = WKV_DEFAULT_SUBSTITUTOR;
     out.context     = NULL;
     return out;
 }
@@ -231,7 +240,7 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
 /// The complexity is linear in the number of keys in the container! This is not the primary way to access keys!
 static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const key, size_t* const key_len);
 
-// ----------------------------------------          WILDCARD KEY API          ----------------------------------------
+// ----------------------------------------          MATCH/ROUTE API          ----------------------------------------
 
 /// A wildcard is a pattern that contains substitution symbols. WKV currently recognizes two types of substitutions:
 ///
@@ -262,7 +271,7 @@ struct wkv_substitution_t
 };
 
 /// The lifetime of all pointers except value ends upon return from the match callback.
-struct wkv_match_t
+struct wkv_hit_t
 {
     /// Full reconstructed key. Lifetime ends upon return from the match callback.
     /// Iff key reconstruction is disabled, this will have a NULL str pointer and len==0.
@@ -276,7 +285,7 @@ struct wkv_match_t
     void* value;
 };
 
-/// Invoked on every wildcard match while searching. The value is guaranteed to be non-NULL.
+/// Invoked on every positive result while searching. The value is guaranteed to be non-NULL.
 ///
 /// Accepts not only the value but also the full key that matched the query,
 /// plus substitutions that matched the wildcards in the query.
@@ -284,32 +293,30 @@ struct wkv_match_t
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
 /// The full key of the found match will be constructed on stack ad-hoc, so the lifetime of the key pointer
 /// will end upon return from this function, but the value will obviously remain valid as long as the entry exists.
-typedef void* (*wkv_on_match_t)(struct wkv_t* self, void* context, struct wkv_match_t match);
+typedef void* (*wkv_callback_t)(struct wkv_t* self, void* context, struct wkv_hit_t match);
 
 /// Matching elements are reported in an unspecified order.
 ///
-/// Searching stops when on_match returns a non-NULL value, which is then propagated back to the caller.
-/// If no matches are found or on_match returns NULL for all matches, then NULL is returned.
+/// Searching stops when callback returns a non-NULL value, which is then propagated back to the caller.
+/// If no matches are found or callback returns NULL for all matches, then NULL is returned.
 ///
 /// key_reconstruction_buffer may be NULL if the matched keys are not of interest; otherwise, it must point
 /// to a storage of at least WKV_KEY_MAX_LEN+1 bytes. Key reconstruction adds extra processing per reported key
 /// which is linearly dependent on the key length.
 static inline void* wkv_match(struct wkv_t* const  self,
                               const char* const    pattern,
-                              const char           wild,
                               char* const          key_reconstruction_buffer,
                               void* const          context,
-                              const wkv_on_match_t on_match);
+                              const wkv_callback_t callback);
 
 /// While wkv_match() searches for keys in a tree that match the pattern,
 /// the route function does the opposite: it searches for patterns in a tree that match the key.
 /// Patterns that match (which are actually keys of the tree) are reported via the callback as usual.
 static inline void* wkv_route(struct wkv_t* const  self,
                               const char* const    key,
-                              const char           wild,
                               char* const          pattern_reconstruction_buffer,
                               void* const          context,
-                              const wkv_on_match_t on_match);
+                              const wkv_callback_t callback);
 
 // ====================================================================================================================
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
@@ -569,10 +576,10 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
 }
 
 /// Ascend the tree and copy the full key leading to the current node into the buffer.
-static inline struct wkv_str_t _wkv_reconstruct_key(const struct wkv_node_t* node,
-                                                    const size_t             key_len,
-                                                    const char               sep,
-                                                    char* const              buf)
+static inline struct wkv_str_t _wkv_reconstruct(const struct wkv_node_t* node,
+                                                const size_t             key_len,
+                                                const char               sep,
+                                                char* const              buf)
 {
     WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
     char* p = &buf[key_len];
@@ -629,13 +636,13 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
         result = node->value;
         if ((key != NULL) && (key_len != NULL) && (key_len_local <= *key_len)) {
             *key_len = key_len_local;
-            (void)_wkv_reconstruct_key(node, key_len_local, self->sep, key);
+            (void)_wkv_reconstruct(node, key_len_local, self->sep, key);
         }
     }
     return result;
 }
 
-// ----------------------------------------        FAST PATTERN MATCHER         ----------------------------------------
+// ----------------------------------------    FAST PATTERN MATCHING ENGINE     ----------------------------------------
 
 struct _wkv_match_t;
 
@@ -652,7 +659,6 @@ typedef void* (*_wkv_match_cb_t)(const struct _wkv_match_t*, struct _wkv_match_e
 struct _wkv_match_t
 {
     struct wkv_t*   self;
-    char            wild;
     _wkv_match_cb_t cb;
 };
 
@@ -735,11 +741,44 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
 {
     const struct _wkv_split_t x = _wkv_split(pattern, ctx->self->sep);
     const bool                wild_recurse =
-      x.last && (x.head.len == 2) && (x.head.str[0] == ctx->wild) && (x.head.str[1] == ctx->wild);
-    const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->wild);
+      x.last && (x.head.len == 2) && (x.head.str[0] == ctx->self->sub) && (x.head.str[1] == ctx->self->sub);
+    const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->self->sub);
     return (wild_segment || wild_recurse)
              ? _wkv_match_all(ctx, node, x.tail, wild_recurse, prefix_len, sub_head, sub_tail)
              : _wkv_match_one(ctx, node, x, prefix_len, sub_head, sub_tail);
+}
+
+// ----------------------------------------       FAST KEY ROUTING ENGINE       ----------------------------------------
+
+struct _wkv_route_t;
+
+struct _wkv_route_event_t
+{
+    struct wkv_node_t*               node;
+    size_t                           pattern_len;
+    const struct wkv_substitution_t* substitutions;
+};
+
+/// Invoked when a match occurs, EVEN IF THE NODE IS VALUELESS.
+typedef void* (*_wkv_route_cb_t)(const struct _wkv_route_t*, struct _wkv_route_event_t);
+
+struct _wkv_route_t
+{
+    struct wkv_t*   self;
+    _wkv_route_cb_t cb;
+};
+
+static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
+                               const struct wkv_node_t* const         node,
+                               const struct wkv_str_t                 q,
+                               const size_t                           prefix_len,
+                               const struct wkv_substitution_t* const sub_head,
+                               struct wkv_substitution_t* const       sub_tail)
+{
+    // Check for single-segment substitution.
+    {
+        const size_t k = _wkv_bisect(node, q);
+    }
 }
 
 // ----------------------------------------            wkv_match            ----------------------------------------
@@ -749,7 +788,7 @@ struct _wkv_match_context_t
     struct _wkv_match_t base;
     char*               key_reconstruction_buffer;
     void*               context;
-    wkv_on_match_t      on_match;
+    wkv_callback_t      callback;
 };
 
 static inline void* _wkv_match_cb_adapter(const struct _wkv_match_t* const ctx, const struct _wkv_match_event_t evt)
@@ -758,29 +797,26 @@ static inline void* _wkv_match_cb_adapter(const struct _wkv_match_t* const ctx, 
     if (evt.node->value != NULL) {
         const struct _wkv_match_context_t* const cast = (struct _wkv_match_context_t*)ctx;
         WKV_ASSERT(evt.key_len <= WKV_KEY_MAX_LEN);
-        struct wkv_match_t match = { { 0, NULL }, evt.substitutions, evt.node->value };
+        struct wkv_hit_t hit = { { 0, NULL }, evt.substitutions, evt.node->value };
         if (cast->key_reconstruction_buffer != NULL) {
-            match.key = _wkv_reconstruct_key(evt.node, evt.key_len, ctx->self->sep, cast->key_reconstruction_buffer);
+            hit.key = _wkv_reconstruct(evt.node, evt.key_len, ctx->self->sep, cast->key_reconstruction_buffer);
         }
-        result = cast->on_match(ctx->self, cast->context, match);
+        result = cast->callback(ctx->self, cast->context, hit);
     }
     return result;
 }
 
 static inline void* wkv_match(struct wkv_t* const  self,
                               const char* const    pattern,
-                              const char           wild,
                               char* const          key_reconstruction_buffer,
                               void* const          context,
-                              const wkv_on_match_t on_match)
+                              const wkv_callback_t callback)
 {
     const struct _wkv_match_context_t ctx = {
-        { self, wild, _wkv_match_cb_adapter }, key_reconstruction_buffer, context, on_match
+        { self, _wkv_match_cb_adapter }, key_reconstruction_buffer, context, callback
     };
     return _wkv_match(&ctx.base, &self->root, _wkv_key(pattern), 0, NULL, NULL);
 }
-
-// ----------------------------------------           FAST KEY ROUTER           ----------------------------------------
 
 #ifdef __cplusplus
 }

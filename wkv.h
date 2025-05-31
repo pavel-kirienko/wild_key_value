@@ -298,7 +298,7 @@ struct wkv_hit_t
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
 /// The full key of the found match will be constructed on stack ad-hoc, so the lifetime of the key pointer
 /// will end upon return from this function, but the value will obviously remain valid as long as the entry exists.
-typedef void* (*wkv_callback_t)(struct wkv_t* self, void* context, struct wkv_hit_t match);
+typedef void* (*wkv_callback_t)(struct wkv_t* self, void* context, struct wkv_hit_t hit);
 
 /// Matching elements are reported in an unspecified order.
 ///

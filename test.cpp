@@ -35,12 +35,6 @@ public:
 
     [[nodiscard]] std::size_t get_oom_count() const { return oom_count_; }
 
-    void set_fragments_cap(const std::size_t fragments_cap)
-    {
-        TEST_ASSERT(fragments_cap > 0);
-        fragments_cap_ = fragments_cap;
-    }
-
     // ReSharper disable once CppParameterMayBeConstPtrOrRef
     [[nodiscard]] static void* trampoline(wkv_t* const self, void* const ptr, const std::size_t new_size)
     {

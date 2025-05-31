@@ -10,29 +10,49 @@
 ///
 ///     wkv_t kv = wkv_init(realloc_function);
 ///
-///     // Set some keys:
+///     // Create some keys:
 ///     void* val = wkv_set(&kv, "foo/bar", my_bar);
 ///     if (val == nullptr) { /* OOM or key too long */ }
 ///     val = wkv_set(&kv, "foo/baz", my_baz);
 ///     if (val == nullptr) { ... }
-///     assert(wkv_get(&kv, "foo/bar") == my_bar);
+///     assert(wkv_get(&kv, "foo/bar") == my_bar);  // Yup, the key is there.
+///     // Note: '/' is the default key segment separator, but it can be changed at runtime.
 ///
-///     // Overwrite a key:
+///     // Existing keys can be overwritten:
 ///     void* val = wkv_set(&kv, "foo/bar", my_zoo);
 ///     if (val == nullptr) { /* Key did not exist and insertion caused OOM, or key too long */ }
-///     assert(wkv_get(&kv, "foo/bar") == my_zoo);
+///     assert(wkv_get(&kv, "foo/bar") == my_zoo);  // Yup, the key was overwritten.
 ///
 ///     // Access keys by index in an unspecified order:
 ///     char key_buf[WKV_KEY_MAX_LEN + 1];
 ///     size_t key_len = sizeof(key_buf);
 ///     void* val = wkv_at(&kv, 0, key_buf, &key_len);
 ///     if (val == nullptr) { /* Index out of range. */ }
-///     else { /* Key is in key_buf, its value is in val. */ }
+///     else {
+///         // Key is in key_buf, key length in key_len, and its value is in val.
+///         printf("key: '%s', value: %p\n", key_buf, val);
+///     }
 ///
 ///     // Erase a key:
 ///     void* val = wkv_set(&kv, "foo/bar", nullptr);
 ///     if (val == nullptr) { /* Key did not exist */ }
-///     else { /* Key existed and was erased; its old value is returned. */ }
+///     else {
+///         // Key existed and was erased; its old value is returned.
+///         // This is a valid usage pattern, too: free(wkv_set(&kv, "foo/bar", nullptr));
+///     }
+///
+///     // Important:
+///     // - Repeated separators are not coalesced but treated verbatim -- distinct strings are distinct keys, always.
+///     // - An empty string is also a valid key.
+///     // Normalization is out of the scope of this library.
+///     // All statements below are valid and create distinct keys:
+///     wkv_set(&kv, "a/b",  my_value);
+///     wkv_set(&kv, "a//b", my_value);
+///     wkv_set(&kv, "/a/b", my_value);
+///     wkv_set(&kv, "a/b/", my_value);
+///     wkv_set(&kv, "/",    my_value);
+///     wkv_set(&kv, "//",   my_value);
+///     wkv_set(&kv, "",     my_value);
 ///
 /// See also:
 /// - Cavl <https://github.com/pavel-kirienko/cavl> -- a single-header, efficient and robust AVL tree implementation.
@@ -280,6 +300,16 @@ static inline void* wkv_match(struct wkv_t* const  self,
                               char* const          key_reconstruction_buffer,
                               void* const          context,
                               const wkv_on_match_t on_match);
+
+/// While wkv_match() searches for keys in a tree that match the pattern,
+/// the inverse function searches for patterns in a tree that match the key.
+/// Patterns that match (which are actually keys of the tree) are reported via the callback as usual.
+static inline void* wkv_match_reverse(struct wkv_t* const  self,
+                                      const char* const    key,
+                                      const char           wild,
+                                      char* const          pattern_reconstruction_buffer,
+                                      void* const          context,
+                                      const wkv_on_match_t on_match);
 
 // ====================================================================================================================
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------

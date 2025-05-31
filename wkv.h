@@ -304,12 +304,12 @@ static inline void* wkv_match(struct wkv_t* const  self,
 /// While wkv_match() searches for keys in a tree that match the pattern,
 /// the inverse function searches for patterns in a tree that match the key.
 /// Patterns that match (which are actually keys of the tree) are reported via the callback as usual.
-static inline void* wkv_match_reverse(struct wkv_t* const  self,
-                                      const char* const    key,
-                                      const char           wild,
-                                      char* const          pattern_reconstruction_buffer,
-                                      void* const          context,
-                                      const wkv_on_match_t on_match);
+static inline void* wkv_match_inv(struct wkv_t* const  self,
+                                  const char* const    key,
+                                  const char           wild,
+                                  char* const          pattern_reconstruction_buffer,
+                                  void* const          context,
+                                  const wkv_on_match_t on_match);
 
 // ====================================================================================================================
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
@@ -504,16 +504,15 @@ static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
                                           const struct wkv_node_t* const node,
                                           const struct wkv_str_t         key)
 {
-    struct wkv_node_t*        result = NULL;
-    const struct _wkv_split_t x      = _wkv_split(key, self->sep);
-    const ptrdiff_t           k      = _wkv_bisect(node, x.head);
+    const struct _wkv_split_t x = _wkv_split(key, self->sep);
+    const ptrdiff_t           k = _wkv_bisect(node, x.head);
     if (k >= 0) {
         WKV_ASSERT((size_t)k < node->n_edges);
         struct wkv_edge_t* const edge = node->edges[k];
         WKV_ASSERT((edge != NULL) && (edge->node.parent == node));
-        result = x.last ? &edge->node : _wkv_get(self, &edge->node, x.tail);
+        return x.last ? &edge->node : _wkv_get(self, &edge->node, x.tail);
     }
-    return result;
+    return NULL;
 }
 
 static inline void* _wkv_del(struct wkv_t* const self, const struct wkv_str_t key)
@@ -667,7 +666,7 @@ struct _wkv_matcher_t
 /// index for the next iteration.
 static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const     ctx,
                                          const struct wkv_node_t* const         node,
-                                         const struct wkv_str_t                 pattern,
+                                         const struct wkv_str_t                 q,
                                          const size_t                           prefix_len,
                                          const struct wkv_substitution_t* const sub_head,
                                          struct wkv_substitution_t* const       sub_tail);
@@ -714,19 +713,18 @@ static inline void* _wkv_matcher_descend_one(const struct _wkv_matcher_t* const 
                                              const struct wkv_substitution_t* const sub_head,
                                              struct wkv_substitution_t* const       sub_tail)
 {
-    void*           result = NULL;
-    const ptrdiff_t k      = _wkv_bisect(node, x.head);
+    const ptrdiff_t k = _wkv_bisect(node, x.head);
     if (k >= 0) { // otherwise, no match on this subtree.
         struct wkv_edge_t* const    edge = node->edges[k];
         struct _wkv_matcher_event_t evt;
         evt.node          = &edge->node;
         evt.key_len       = prefix_len + edge->seg_len;
         evt.substitutions = sub_head;
-        result            = x.last //
-                              ? ctx->cb(ctx, evt)
-                              : _wkv_matcher_descend(ctx, evt.node, x.tail, evt.key_len + 1, sub_head, sub_tail);
+        return x.last //
+                 ? ctx->cb(ctx, evt)
+                 : _wkv_matcher_descend(ctx, evt.node, x.tail, evt.key_len + 1, sub_head, sub_tail);
     }
-    return result;
+    return NULL;
 }
 
 static inline void* _wkv_matcher_descend(const struct _wkv_matcher_t* const     ctx,

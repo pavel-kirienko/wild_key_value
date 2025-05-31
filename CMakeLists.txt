@@ -62,6 +62,7 @@ add_test("run_test" "test_wkv")
 
 # BENCHY
 add_executable(benchy ${CMAKE_CURRENT_SOURCE_DIR}/benchy.c)
+target_link_libraries(benchy m)
 add_test("run_benchy" "benchy")
 
 # LCOV REPORT

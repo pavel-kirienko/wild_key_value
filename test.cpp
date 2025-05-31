@@ -155,13 +155,13 @@ void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
         const ::wkv_edge_t* const edge = node->edges[i];
         TEST_ASSERT(edge != nullptr);
         TEST_ASSERT_EQUAL_PTR(edge->node.parent, node);
-        char payload[256];
+        char value[256];
         if (edge->node.value != nullptr) {
-            (void)std::snprintf(payload, sizeof(payload), "%p", edge->node.value);
+            (void)std::snprintf(value, sizeof(value), "%p", edge->node.value);
         } else {
-            payload[0] = '\0';
+            value[0] = '\0';
         }
-        std::printf("%*s#%zu '%s': %s\n", indent, "", i, edge->seg, payload);
+        std::printf("%*s#%zu '%s': %s\n", indent, "", i, edge->seg, value);
         print(&edge->node, depth + 1);
     }
 }

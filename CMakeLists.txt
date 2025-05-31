@@ -9,6 +9,7 @@ enable_testing()
 set(CTEST_OUTPUT_ON_FAILURE ON)
 
 # Use -DNO_STATIC_ANALYSIS=1 to suppress static analysis. If not suppressed, the tools used here shall be available.
+set(NO_STATIC_ANALYSIS OFF CACHE BOOL "Suppress static analysis tools")
 if (NOT NO_STATIC_ANALYSIS)
     find_program(clang_tidy NAMES clang-tidy)
     if (NOT clang_tidy)

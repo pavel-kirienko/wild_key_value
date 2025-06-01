@@ -327,7 +327,7 @@ typedef void* (*wkv_callback_t)(struct wkv_t* self, void* context, struct wkv_hi
 /// at least WKV_KEY_MAX_LEN+1 bytes. Key reconstruction adds extra processing per reported key, which is linearly
 /// dependent on the key length.
 ///
-/// The general computational complexity is about O(n log n). However, if no substitutions are present in the
+/// The general computational complexity approaches linear. However, if no substitutions are present in the
 /// query, then the complexity equals that of an ordinary key lookup (logarithmic).
 static inline void* wkv_match(struct wkv_t* const  self,
                               const char* const    query,
@@ -688,6 +688,8 @@ struct _wkv_match_t
 /// One way to do this is to copy the edge pointer array on the stack before traversing it.
 /// Another solution is to bubble up the removal flag to the traversal function so that we can reuse the same
 /// index for the next iteration.
+///
+/// We assume tail call optimization in the verbatim match case here.
 static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                const struct wkv_node_t* const         node,
                                const struct _wkv_split_t              qs,
@@ -700,6 +702,7 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
     const bool x_seg  = (qs.head.str[0] == ctx->self->sub) && (qs.head.len == 1);
     void*      result = NULL;
     if (x_seg || x_rec) {
+        const struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep); // compute only once before the loop
         for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
             struct wkv_edge_t* const edge = node->edges[i];
             // Create a new substitution for the current edge segment and link it into the list.
@@ -709,14 +712,10 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                 sub_tail->next = &sub;
             }
             const size_t key_len = prefix_len + edge->seg_len;
-            result = qs.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new) //
-                             : _wkv_match(ctx,
-                                          &edge->node,
-                                          _wkv_split(qs.tail, ctx->self->sep),
-                                          key_len + 1,
-                                          sub_head_new,
-                                          &sub,
-                                          recursing || x_rec);
+            result =
+              qs.last
+                ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new) // -------------------
+                : _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || x_rec);
             if (x_rec && (!recursing) && (result == NULL)) {
                 // Expand "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
                 // However, we do not allow more than one recursive segment in the query, because it leads to:
@@ -731,7 +730,7 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
             struct wkv_edge_t* const edge    = node->edges[k];
             const size_t             key_len = prefix_len + edge->seg_len;
             result = qs.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head)
-                             : _wkv_match(ctx, // This should be tail-call optimized.
+                             : _wkv_match(ctx, //
                                           &edge->node,
                                           _wkv_split(qs.tail, ctx->self->sep),
                                           key_len + 1,

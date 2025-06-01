@@ -933,15 +933,15 @@ void test_route()
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "/", key_buf, &collector, Collector::trampoline));
-        for (const auto& m : collector.get_matches()) {
-            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
-        }
         TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b", key_buf, &collector, Collector::trampoline));
-        TEST_ASSERT(collector.get_matches().empty());
+        for (const auto& m : collector.get_matches()) {
+            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
+        }
+        TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
     }
     {
         Collector collector;
@@ -951,6 +951,9 @@ void test_route()
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c", key_buf, &collector, Collector::trampoline));
+        for (const auto& m : collector.get_matches()) {
+            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
+        }
         TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
     }
 
@@ -967,6 +970,34 @@ void test_route()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
+void test_route_2()
+{
+    Memory mem(50);
+    wkv_t  wkv  = wkv_init(Memory::trampoline);
+    wkv.context = &mem;
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x01), wkv_add(&wkv, "x", i2ptr(0x01)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x02), wkv_add(&wkv, "**/x", i2ptr(0x02)));
+    char key_buf[WKV_KEY_MAX_LEN + 1];
+    {
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/x", key_buf, &collector, Collector::trampoline));
+        for (const auto& m : collector.get_matches()) {
+            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
+        }
+        TEST_ASSERT_EQUAL_size_t(1, collector.get_matches().size());
+    }
+    // Cleanup.
+    while (!wkv_is_empty(&wkv)) {
+        size_t      key_len = WKV_KEY_MAX_LEN + 1;
+        void* const v       = wkv_at(&wkv, 0, key_buf, &key_len);
+        TEST_ASSERT(nullptr != v);
+        TEST_ASSERT(key_len <= WKV_KEY_MAX_LEN);
+        TEST_ASSERT_EQUAL_PTR(v, wkv_set(&wkv, key_buf, nullptr));
+    }
+    TEST_ASSERT(wkv_is_empty(&wkv));
+    TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
+    TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
+}
 } // namespace
 
 int main(const int argc, const char* const argv[])
@@ -984,6 +1015,7 @@ int main(const int argc, const char* const argv[])
     RUN_TEST(test_match_2);
     RUN_TEST(test_match_3);
     RUN_TEST(test_route);
+    RUN_TEST(test_route_2);
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)
 }

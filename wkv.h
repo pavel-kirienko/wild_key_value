@@ -194,7 +194,7 @@ struct wkv_t
     char sep;
 
     /// Substitution character used in pattern matching. The default is WKV_DEFAULT_SUBSTITUTOR.
-    /// Can be changed to any non-zero character at any moment.
+    /// Can be changed to any non-zero character.
     char sub;
 
     void* context; ///< Can be assigned by the user code arbitrarily.
@@ -375,9 +375,10 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
     }
 }
 
+/// Use max+1 as max length to avoid truncating long keys, as that may cause an invalid key to match an existing
+/// valid key. NULL strings are treated as if they were valid empty strings.
 static inline struct wkv_str_t _wkv_key(const char* const str)
 {
-    // Use max+1 to avoid truncating long keys, as that may cause an invalid key to match an existing valid key.
     const struct wkv_str_t out = { (str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN + 1) : 0, str };
     return out;
 }
@@ -692,9 +693,6 @@ struct _wkv_match_t
     _wkv_hit_cb_t callback;
 };
 
-/// Attempts to match the pattern against all nodes, even valueless ones, and reports them to the callback.
-/// If you want to hand it over to the user, ensure the node is not valueless first!
-///
 /// Currently, we DO NOT support wildcard removal of nodes from the callback, for the sole reason that removal
 /// would invalidate our edges traversal state. This can be doctored, if necessary.
 /// One way to do this is to copy the edge pointer array on the stack before traversing it.
@@ -722,15 +720,17 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                 sub_tail->next = &sub;
             }
             const size_t key_len = prefix_len + edge->seg_len;
-            result =
-              qs.last
-                ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new) // -------------------
-                : _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || x_rec);
+            if (qs.last) { // report a match if both the stored key and the query end at this node
+                if (edge->node.value != NULL) {
+                    result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
+                }
+            } else {
+                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || x_rec);
+            }
             if (x_rec && (!recursing) && (result == NULL)) {
                 // Expand "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
-                // However, we do not allow more than one recursive segment in the query, because it leads to:
-                // 1. Exponential growth of the search space.
-                // 2. The possibility of matching the same node multiple times.
+                // However, we do not allow more than one recursive segment in the query, because it leads to fast
+                // growth of the search space and the possibility of matching the same node multiple times.
                 result = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, recursing);
             }
         }
@@ -739,14 +739,19 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
         if (k >= 0) {
             struct wkv_edge_t* const edge    = node->edges[k];
             const size_t             key_len = prefix_len + edge->seg_len;
-            result = qs.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head)
-                             : _wkv_match(ctx, // this should be tail call optimized
-                                          &edge->node,
-                                          _wkv_split(qs.tail, ctx->self->sep),
-                                          key_len + 1,
-                                          sub_head,
-                                          sub_tail,
-                                          recursing);
+            if (qs.last) { // report a match if both the stored key and the query end at this node
+                if (edge->node.value != NULL) {
+                    result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head);
+                }
+            } else {
+                result = _wkv_match(ctx, // tail call
+                                    &edge->node,
+                                    _wkv_split(qs.tail, ctx->self->sep),
+                                    key_len + 1,
+                                    sub_head,
+                                    sub_tail,
+                                    recursing);
+            }
         }
     }
     return result;
@@ -762,8 +767,6 @@ struct _wkv_route_t
     struct wkv_str_t sub_recursive; // '**'
 };
 
-/// Attempts to match the pattern against all nodes, even valueless ones, and reports them to the callback.
-/// If you want to hand it over to the user, ensure the node is not valueless first!
 static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const struct wkv_node_t* const         node,
                                const struct _wkv_split_t              qs,
@@ -790,14 +793,19 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
         }
         const size_t key_len = prefix_len + edge->seg_len;
         // First, handle the normal non-recursive case.
-        result = qs.last
-                   ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new)
-                   : _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || recursive);
+        if (qs.last) {
+            if (edge->node.value != NULL) {
+                result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
+            }
+        } else {
+            result = _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || recursive);
+        }
         // Then descend, expanding "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
+        // The expansion is done by shifting the query left while staying at the same node.
         // As is the case with normal matching, we allow at most one recursive segment in pattern
         // to constrain the search complexity and avoid duplicate matches.
-        if (recursive && (!recursing) && (result == NULL)) {
-            result = _wkv_route(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, recursing);
+        if (recursive && (!qs.last) && (!recursing) && (result == NULL)) {
+            result = _wkv_route(ctx, node, qs_next, prefix_len, sub_head_new, &sub, recursing);
         }
     }
     // Verbatim match case.
@@ -806,14 +814,19 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
         if (k >= 0) {
             struct wkv_edge_t* const edge    = node->edges[k];
             const size_t             key_len = prefix_len + edge->seg_len;
-            return qs.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head)
-                           : _wkv_route(ctx, //
-                                        &edge->node,
-                                        qs_next,
-                                        key_len + 1,
-                                        sub_head,
-                                        sub_tail,
-                                        recursing);
+            if (qs.last) {
+                if (edge->node.value != NULL) {
+                    result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head);
+                }
+            } else {
+                result = _wkv_route(ctx, // tail call
+                                    &edge->node,
+                                    qs_next,
+                                    key_len + 1,
+                                    sub_head,
+                                    sub_tail,
+                                    recursing);
+            }
         }
     }
     return result;
@@ -835,17 +848,14 @@ static inline void* _wkv_hit_cb_adapter(struct wkv_t* const                    s
                                         const size_t                           key_len,
                                         const struct wkv_substitution_t* const sub_head)
 {
-    void* result = NULL;
-    if (node->value != NULL) {
-        const struct _wkv_hit_cb_adapter_context_t* const ctx = (struct _wkv_hit_cb_adapter_context_t*)context;
-        WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
-        struct wkv_hit_t hit = { { 0, NULL }, sub_head, node->value };
-        if (ctx->reconstruction_buffer != NULL) {
-            hit.key = _wkv_reconstruct(node, key_len, self->sep, ctx->reconstruction_buffer);
-        }
-        result = ctx->callback(self, ctx->context, hit);
+    WKV_ASSERT(node->value != NULL);
+    WKV_ASSERT(key_len <= WKV_KEY_MAX_LEN);
+    const struct _wkv_hit_cb_adapter_context_t* const ctx = (struct _wkv_hit_cb_adapter_context_t*)context;
+    struct wkv_hit_t                                  hit = { { 0, NULL }, sub_head, node->value };
+    if (ctx->reconstruction_buffer != NULL) {
+        hit.key = _wkv_reconstruct(node, key_len, self->sep, ctx->reconstruction_buffer);
     }
-    return result;
+    return ctx->callback(self, ctx->context, hit);
 }
 
 static inline void* wkv_match(struct wkv_t* const  self,

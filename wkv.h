@@ -249,6 +249,8 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 /// otherwise, the segment is treated as a literal (matches only itself).
 ///
 /// Recursive substitution: "abc/**/def" -- matches any number of segments, e.g. "abc/123/456/def".
+/// It is treated as an infinite sequence of single-segment substitutions:
+/// "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", ...
 /// There may be at most one recursive substitution in the pattern; if more are found, only the first one has effect,
 /// while all subsequent ones are treated as single-segment substitutions. That is, the following two are equivalent:
 /// "abc/**/def/**" and "abc/**/def/*".
@@ -367,12 +369,11 @@ static inline struct _wkv_split_t _wkv_split(const struct wkv_str_t key, const c
 {
     const char* const   slash   = (const char*)memchr(key.str, sep, key.len);
     const size_t        seg_len = (slash != NULL) ? (size_t)(slash - key.str) : key.len;
-    struct _wkv_split_t out;
-    out.head.str = key.str;
-    out.head.len = seg_len;
-    out.tail.str = (slash != NULL) ? (slash + 1) : NULL;
-    out.tail.len = (slash != NULL) ? (key.len - seg_len - 1U) : 0U;
-    out.last     = (slash == NULL);
+    struct _wkv_split_t out     = { { seg_len, key.str }, { 0, NULL }, slash == NULL };
+    if (slash != NULL) {
+        out.tail.str = slash + 1;
+        out.tail.len = key.len - seg_len - 1U;
+    }
     return out;
 }
 
@@ -676,12 +677,11 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                struct wkv_substitution_t* const       sub_tail,
                                const bool                             recursing)
 {
-    const struct _wkv_split_t x = _wkv_split(q, ctx->self->sep); // TODO: avoid re-splitting when handling **?
-    const bool                wild_recurse =
-      (x.head.len == 2) && (x.head.str[0] == ctx->self->sub) && (x.head.str[1] == ctx->self->sub);
-    const bool wild_segment = (x.head.len == 1) && (x.head.str[0] == ctx->self->sub);
-    void*      result       = NULL;
-    if (wild_segment || wild_recurse) {
+    const struct _wkv_split_t x = _wkv_split(q, ctx->self->sep);
+    const bool x_recurse = (x.head.str[0] == ctx->self->sub) && (x.head.str[1] == ctx->self->sub) && (x.head.len == 2);
+    const bool x_segment = (x.head.str[0] == ctx->self->sub) && (x.head.len == 1);
+    void*      result    = NULL;
+    if (x_segment || x_recurse) {
         for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
             struct wkv_edge_t* const edge = node->edges[i];
             // Create a new substitution for the current edge segment and link it into the list.
@@ -693,13 +693,13 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
             const size_t key_len = prefix_len + edge->seg_len;
             result =
               x.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new)
-                     : _wkv_match(ctx, &edge->node, x.tail, key_len + 1, sub_head_new, &sub, recursing || wild_recurse);
-            if (wild_recurse && (!recursing) && (result == NULL)) {
+                     : _wkv_match(ctx, &edge->node, x.tail, key_len + 1, sub_head_new, &sub, recursing || x_recurse); //
+            if (x_recurse && (!recursing) && (result == NULL)) {
                 // Expand "a/**/b" ==> "a/*/b", "a/*/*/b", "a/*/*/*/b", etc.
                 // However, we do not allow more than one recursive segment in the query, because it leads to:
                 // 1. Exponential growth of the search space.
                 // 2. The possibility of matching the same node multiple times.
-                result = _wkv_match(ctx, &edge->node, q, key_len + 1, sub_head_new, &sub, false);
+                result = _wkv_match(ctx, &edge->node, q, key_len + 1, sub_head_new, &sub, recursing);
             }
         }
     } else {

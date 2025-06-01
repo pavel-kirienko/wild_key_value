@@ -48,7 +48,7 @@
 ///         // This is a valid usage pattern, too: free(wkv_set(&kv, "foo/bar", nullptr));
 ///     }
 ///
-///     // Important:
+///     // Important: an empty key segment is also a valid key segment. This simple rule implies that:
 ///     // - Repeated separators are not coalesced but treated verbatim -- distinct strings are distinct keys, always.
 ///     // - An empty string is also a valid key.
 ///     // Normalization is out of the scope of this library.
@@ -120,6 +120,8 @@ extern "C"
 #endif
 
 // ----------------------------------------         PUBLIC API SECTION         ----------------------------------------
+
+// TODO BETTER DOCS
 
 /// The default maximum key length is chosen rather arbitrarily. It does not affect the memory consumption or
 /// performance within the container, but it is needed to enforce memory safety applying strlen on the input C strings,
@@ -252,8 +254,21 @@ static inline void* wkv_get(const struct wkv_t* const self, const char* const ke
 /// If key or key_len are NULL, or if the key buffer is too small, then the key will not be returned.
 /// To check if the key was returned, set key_len to WKV_KEY_MAX_LEN+1 and then check key_len<=WKV_KEY_MAX_LEN.
 ///
+/// One could also use wkv_match() with the "**" pattern to list keys, but the difference here is that this function
+/// works for keys composed of arbitrary characters, while wkv_match() assumes that certain characters (substitutions)
+/// have special meaning.
+///
 /// If the index is out of bounds, then NULL is returned.
 /// The complexity is linear in the number of keys in the container! This is not the primary way to access keys!
+///
+/// Hint: one way to remove all keys from a container in O(n log n) time is:
+///
+///     while (!wkv_is_empty(&kv)) {
+///         char key_buf[WKV_KEY_MAX_LEN + 1];
+///         size_t      key_len = sizeof(key_buf);
+///         (void)wkv_at(&kv, 0, key_buf, &key_len);
+///         (void)wkv_set(&kv, key_buf, nullptr);  // both wkv_at() and wkv_set() will return the key value
+///     }
 static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const key, size_t* const key_len);
 
 // ----------------------------------------          MATCH/ROUTE API          ----------------------------------------
@@ -269,12 +284,13 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 /// "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", ...
 /// There may be at most one recursive substitution in the pattern; if more are found, only the first one has effect,
 /// while all subsequent ones are treated as single-segment substitutions. That is, the following two are equivalent:
-/// "abc/**/def/**" and "abc/**/def/*".
+/// "abc/**/def/**" and "abc/**/def/*". This behavior should not be relied upon because it may change in a future
+/// minor revision; for reasons of future compatibility, assume this behavior to be unspecified.
 ///
 /// The reason for allowing at most one ** is that multiple recursive substitutions create ambiguity in the query,
 /// which in certain scenarios causes the matcher to match the same key multiple times, plus it causes an exponential
 /// increase in the computational complexity. It appears to be difficult to avoid these issues without a significant
-/// performance penalty, hence the limitation is imposed.
+/// performance and memory penalty, hence the limitation is imposed.
 ///
 /// When a wildcard match occurs, the list of all substitution patterns that matched the corresponding query segments
 /// is reported using this structure. The elements are ordered in the same way as they appear in the query.
@@ -294,6 +310,7 @@ struct wkv_substitution_t
 };
 
 /// The lifetime of all pointers except value ends upon return from the match callback.
+/// TODO: allow the user to invoke key reconstruction; needs key length and node here for that.
 struct wkv_hit_t
 {
     /// Full reconstructed key. Lifetime ends upon return from the match callback.
@@ -360,20 +377,15 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 
 static inline struct wkv_str_t _wkv_key(const char* const str)
 {
-    WKV_ASSERT(str != NULL);
-    struct wkv_str_t out;
     // Use max+1 to avoid truncating long keys, as that may cause an invalid key to match an existing valid key.
-    out.len = strnlen(str, WKV_KEY_MAX_LEN + 1);
-    out.str = str;
+    const struct wkv_str_t out = { (str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN + 1) : 0, str };
     return out;
 }
 
 static inline struct wkv_str_t _wkv_edge_seg(const struct wkv_edge_t* const edge)
 {
     WKV_ASSERT(edge != NULL);
-    struct wkv_str_t out;
-    out.len = edge->seg_len;
-    out.str = edge->seg;
+    const struct wkv_str_t out = { edge->seg_len, edge->seg };
     return out;
 }
 
@@ -386,7 +398,7 @@ struct _wkv_split_t
 
 static inline struct _wkv_split_t _wkv_split(const struct wkv_str_t key, const char sep)
 {
-    const char* const   slash   = (const char*)memchr(key.str, sep, key.len);
+    const char* const   slash   = (key.str != NULL) ? (const char*)memchr(key.str, sep, key.len) : NULL;
     const size_t        seg_len = (slash != NULL) ? (size_t)(slash - key.str) : key.len;
     struct _wkv_split_t out     = { { seg_len, key.str }, { 0, NULL }, slash == NULL };
     if (slash != NULL) {
@@ -760,7 +772,8 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                struct wkv_substitution_t* const       sub_tail,
                                const bool                             recursing)
 {
-    void* result = NULL;
+    const struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep);
+    void*                     result  = NULL;
     // Substitution cases.
     for (size_t i = 0; (i < 2) && (result == NULL); ++i) {
         const bool      recursive = (i == 1);
@@ -777,14 +790,9 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
         }
         const size_t key_len = prefix_len + edge->seg_len;
         // First, handle the normal non-recursive case.
-        result = qs.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new)
-                         : _wkv_route(ctx, //
-                                      &edge->node,
-                                      _wkv_split(qs.tail, ctx->self->sep),
-                                      key_len + 1,
-                                      sub_head_new,
-                                      &sub,
-                                      recursing || recursive);
+        result = qs.last
+                   ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new)
+                   : _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || recursive);
         // Then descend, expanding "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
         // As is the case with normal matching, we allow at most one recursive segment in pattern
         // to constrain the search complexity and avoid duplicate matches.
@@ -801,7 +809,7 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
             return qs.last ? ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head)
                            : _wkv_route(ctx, //
                                         &edge->node,
-                                        _wkv_split(qs.tail, ctx->self->sep),
+                                        qs_next,
                                         key_len + 1,
                                         sub_head,
                                         sub_tail,

@@ -3,8 +3,11 @@
 /// Wild Key-Value (WKV) is a very fast and very simple single-header key-value container for embedded systems
 /// that supports wildcard lookup. The keys are strings, and the values are void pointers.
 /// Keys are stored in the heap in fragments; common prefixes are deduplicated so the memory usage is minimized.
+///
 /// The container is designed for very fast logarithmic lookup and insertion (roughly comparable to std::map),
-/// and is extremely frugal with memory.
+/// and is extremely frugal with memory. Internally, it uses bisection comparing key segments by length first
+/// (shorter compares smaller), then lexicographically; this is important in some applications.
+///
 /// The recommended memory manager is O1Heap, which offers constant allocation time and low worst-case fragmentation,
 /// but it works with any other heap (incl. the standard heap) as well.
 ///
@@ -685,8 +688,6 @@ struct _wkv_match_t
 /// One way to do this is to copy the edge pointer array on the stack before traversing it.
 /// Another solution is to bubble up the removal flag to the traversal function so that we can reuse the same
 /// index for the next iteration.
-///
-/// We accept both the query q and its split qs to avoid re-splitting it at every recursion level when matching a `**`.
 static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                const struct wkv_node_t* const         node,
                                const struct _wkv_split_t              qs,
@@ -754,8 +755,6 @@ struct _wkv_route_t
 
 /// Attempts to match the pattern against all nodes, even valueless ones, and reports them to the callback.
 /// If you want to hand it over to the user, ensure the node is not valueless first!
-///
-/// We accept both the query q and its split qs to avoid re-splitting it at every recursion level when matching a `**`.
 static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const struct wkv_node_t* const         node,
                                const struct _wkv_split_t              qs,

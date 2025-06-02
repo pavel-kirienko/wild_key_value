@@ -938,15 +938,15 @@ void test_route()
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b", key_buf, &collector, Collector::trampoline));
-        for (const auto& m : collector.get_matches()) {
-            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
-        }
         TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c/", key_buf, &collector, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
+        for (const auto& m : collector.get_matches()) {
+            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
+        }
+        TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
     }
     {
         Collector collector;

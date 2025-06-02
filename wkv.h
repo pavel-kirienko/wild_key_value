@@ -824,7 +824,7 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                     break;
                 }
                 result =
-                  _wkv_route(ctx, &edge->node, _wkv_split(qs.tail, ctx->self->sep), key_len + 1, sub_head_new, &sub);
+                  _wkv_route(ctx, &edge->node, _wkv_split(qs2.tail, ctx->self->sep), key_len + 1, sub_head_new, &sub);
                 sub.next = NULL;
                 qs2      = _wkv_split(qs2.tail, ctx->self->sep);
             }

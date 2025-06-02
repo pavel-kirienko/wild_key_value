@@ -754,6 +754,7 @@ static inline void* _wkv_match_sub_any(const struct _wkv_hit_ctx_t* const     ct
                                        const struct wkv_substitution_t* const sub_head,
                                        struct wkv_substitution_t* const       sub_tail)
 {
+    WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     void*                     result  = NULL;
     const struct _wkv_split_t qs_next = qs.last ? qs : _wkv_split(qs.tail, ctx->self->sep);
     for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
@@ -767,10 +768,8 @@ static inline void* _wkv_match_sub_any(const struct _wkv_hit_ctx_t* const     ct
                    ? _wkv_hit_node(ctx, &edge->node, prefix_len + edge->seg_len, sub_head_new)
                    : _wkv_match(ctx, &edge->node, qs_next, prefix_len + edge->seg_len + 1, sub_head_new, &sub, true);
         if (result == NULL) {
-            // TODO: MATCH ZERO SEGMENTS AS WELL
-            // Expand "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
             sub.next = NULL;
-            result   = _wkv_match(ctx, &edge->node, qs, prefix_len + edge->seg_len + 1, sub_head_new, &sub, false);
+            result   = _wkv_match_sub_any(ctx, &edge->node, qs, prefix_len + edge->seg_len + 1, sub_head_new, &sub);
         }
     }
     return result;

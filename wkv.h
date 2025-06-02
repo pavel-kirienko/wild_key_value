@@ -279,19 +279,19 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 
 /// A wildcard is a pattern that contains substitution symbols. WKV currently recognizes two types of substitutions:
 ///
-/// Single-segment substitution: "/abc/*/def" -- matches "/abc/123/def", with "123" being the substitution.
-/// The single-segment substitution symbol must be the only symbol in the segment;
-/// otherwise, the segment is treated as a literal (matches only itself).
+/// One-segment substitution: "/abc/*/def" -- matches "/abc/123/def", with "123" being the substitution.
+/// The one-segment substitution symbol must be the only symbol in the segment;
+/// otherwise, the segment is treated verbatim (matches only itself).
 ///
-/// Multi-segment substitution: "abc/**/def" -- matches any positive number of segments, e.g. "abc/123/456/def".
-/// It is treated as an infinite sequence of single-segment substitutions:
-/// "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", ...
-/// There may be at most one multi-segment substitution in the pattern; if more are found, only the first one has
-/// effect, while all subsequent ones are treated as single-segment substitutions. That is, the following two are
-/// equivalent: "abc/**/def/**" and "abc/**/def/*". This behavior should not be relied upon because it may change in a
-/// future minor revision; hence, patterns with multiple multi-segment substitutions should be avoided.
+/// Any-segment substitution: "abc/**/def" -- matches any number of segments, including zero;
+/// e.g. "abc/123/456/def", "abc/def".
+/// It is treated as an infinite sequence of one-segment substitutions:
+/// "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", "a/*/*/*/z", ...
+/// There may be at most one any-segment substitution in the pattern; if more are found, the following occurrences
+/// are treated verbatim (no substitution will take place). This behavior should not be relied upon because it may
+/// change in a future minor revision; hence, patterns with multiple any-segment substitutions should be avoided.
 ///
-/// The reason for allowing at most one ** is that multiple multi-segment substitutions create ambiguity in the query,
+/// The reason for allowing at most one ** is that multiple any-segment substitutions create ambiguity in the query,
 /// which in certain scenarios causes the matcher to match the same key multiple times, plus it causes an exponential
 /// increase in the computational complexity. It appears to be difficult to avoid these issues without a significant
 /// performance and memory penalty, hence the limitation is imposed.
@@ -305,7 +305,7 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 /// 4. "xyz"
 ///
 /// If the pattern contains only single-segment substitutions, then the number of reported found substitutions equals
-/// the number of substitution segments in the query. If a multi-segment substitution is present, then the number of
+/// the number of substitution segments in the query. If a any-segment substitution is present, then the number of
 /// substitutions may be greater.
 struct wkv_substitution_t
 {
@@ -709,7 +709,7 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                const size_t                           prefix_len,
                                const struct wkv_substitution_t* const sub_head,
                                struct wkv_substitution_t* const       sub_tail,
-                               const bool                             multi_exp)
+                               const bool                             any_exp)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     const bool x_mult = (qs.head.len == 2) && (qs.head.str[0] == ctx->self->sub) && (qs.head.str[1] == ctx->self->sub);
@@ -731,15 +731,14 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                     result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
                 }
             } else {
-                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, multi_exp || x_mult);
+                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, any_exp || x_mult);
             }
-            if (x_mult && (!multi_exp) && (result == NULL)) {
-                // Expand "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
-                // However, we do not allow more than one multi-segment substitution in the query, because it leads to
+            if (x_mult && (!any_exp) && (result == NULL)) {
+                // Expand "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
+                // However, we do not allow more than one any-segment substitution in the query, because it leads to
                 // fast growth of the search space and the possibility of matching the same node multiple times.
-                // TODO: allow multi-segment to match nothing, i.e. "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", etc?
                 sub.next = NULL;
-                result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, multi_exp);
+                result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, any_exp);
             }
         }
     } else {
@@ -758,7 +757,7 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                     key_len + 1,
                                     sub_head,
                                     sub_tail,
-                                    multi_exp);
+                                    any_exp);
             }
         }
     }
@@ -771,11 +770,11 @@ struct _wkv_route_t
     void*         context; ///< Passed to the callback.
     _wkv_hit_cb_t callback;
     // Pre-created patterns to avoid construction while searching. Must be initialized before use!
-    struct wkv_str_t sub_single; // '*'
-    struct wkv_str_t sub_multi;  // '**'
+    struct wkv_str_t sub_one; // '*'
+    struct wkv_str_t sub_any; // '**'
 };
 
-/// The multi_seen is used to track occurrences of the multi-segment substitution pattern in the path.
+/// The any_seen is used to track occurrences of the any-segment substitution pattern in the path.
 /// We do not allow more than one per path to manage the search complexity and avoid double-matching the query key.
 static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const struct wkv_node_t* const         node,
@@ -783,7 +782,7 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const size_t                           prefix_len,
                                const struct wkv_substitution_t* const sub_head,
                                struct wkv_substitution_t* const       sub_tail,
-                               const bool                             multi_seen);
+                               const bool                             any_seen);
 
 static inline void* _wkv_route_sub_one(const struct _wkv_route_t* const       ctx,
                                        struct wkv_edge_t* const               edge,
@@ -791,7 +790,7 @@ static inline void* _wkv_route_sub_one(const struct _wkv_route_t* const       ct
                                        const size_t                           prefix_len,
                                        const struct wkv_substitution_t* const sub_head,
                                        struct wkv_substitution_t* const       sub_tail,
-                                       const bool                             multi_seen)
+                                       const bool                             any_seen)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     struct wkv_substitution_t        sub          = { qs.head, NULL };
@@ -810,7 +809,7 @@ static inline void* _wkv_route_sub_one(const struct _wkv_route_t* const       ct
                           prefix_len + edge->seg_len + 1,
                           sub_head_new,
                           &sub,
-                          multi_seen);
+                          any_seen);
     }
     return NULL;
 }
@@ -823,8 +822,7 @@ static inline void* _wkv_route_sub_any(const struct _wkv_route_t* const       ct
                                        struct wkv_substitution_t* const       sub_tail)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
-    const size_t key_len = prefix_len + edge->seg_len;
-    void*        result  = _wkv_route(ctx, &edge->node, qs, key_len + 1, sub_head, sub_tail, true);
+    void* result = _wkv_route(ctx, &edge->node, qs, prefix_len + edge->seg_len + 1, sub_head, sub_tail, true);
     if (result == NULL) {
         struct wkv_substitution_t        sub          = { qs.head, NULL };
         const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
@@ -833,7 +831,7 @@ static inline void* _wkv_route_sub_any(const struct _wkv_route_t* const       ct
         }
         if (qs.last) {
             if (edge->node.value != NULL) {
-                result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
+                result = ctx->callback(ctx->self, ctx->context, &edge->node, prefix_len + edge->seg_len, sub_head_new);
             }
         } else { // this is just a loop where at each iteration we shift the query and add a new substitution
             sub.next = NULL;
@@ -849,21 +847,20 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const size_t                           prefix_len,
                                const struct wkv_substitution_t* const sub_head,
                                struct wkv_substitution_t* const       sub_tail,
-                               const bool                             multi_seen)
+                               const bool                             any_seen)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     void* result = NULL;
     {
-        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_single);
+        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_one);
         if (k >= 0) {
-            result = _wkv_route_sub_one(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, multi_seen);
+            result = _wkv_route_sub_one(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, any_seen);
         }
     }
-    if (result == NULL) {
-        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_multi);
+    if ((result == NULL) && (!any_seen)) {
+        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_any);
         if (k >= 0) {
-            result = multi_seen ? _wkv_route_sub_one(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, true)
-                                : _wkv_route_sub_any(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail);
+            result = _wkv_route_sub_any(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail);
         }
     }
     if (result == NULL) {
@@ -875,14 +872,9 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                 if (edge->node.value != NULL) {
                     result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head);
                 }
-            } else {
-                result = _wkv_route(ctx, // tail call
-                                    &edge->node,
-                                    _wkv_split(qs.tail, ctx->self->sep),
-                                    key_len + 1,
-                                    sub_head,
-                                    sub_tail,
-                                    multi_seen);
+            } else { // tail call
+                result = _wkv_route(
+                  ctx, &edge->node, _wkv_split(qs.tail, ctx->self->sep), key_len + 1, sub_head, sub_tail, any_seen);
             }
         }
     }

@@ -932,7 +932,7 @@ void test_route()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x08), wkv_add(&wkv, "**/", i2ptr(0x08)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x09), wkv_add(&wkv, "a/**", i2ptr(0x09)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x0A), wkv_add(&wkv, "**/c/*", i2ptr(0x0A)));
-    TEST_ASSERT_EQUAL_PTR(i2ptr(0x0B), wkv_add(&wkv, "**/b/**", i2ptr(0x0B))); // second ** is treated as *
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x0B), wkv_add(&wkv, "**/b/**", i2ptr(0x0B))); // dual ** invalid, treated verbatim
 
     // Test same keys, get different results.
     {
@@ -967,18 +967,16 @@ void test_route()
         TEST_ASSERT(collector.get_matches()[2].check("**", { "a", "b", "c", "" }, i2ptr(0x07)));
         TEST_ASSERT(collector.get_matches()[3].check("a/**", { "b", "c", "" }, i2ptr(0x09)));
         TEST_ASSERT(collector.get_matches()[4].check("a/b/c/", {}, i2ptr(0x06)));
-        // NB! "**/b/**" did not match because the second ** is treated as *.
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c", key_buf, &collector, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(6, collector.get_matches().size());
+        TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
         TEST_ASSERT(collector.get_matches()[0].check("*/b/*", { "a", "c" }, i2ptr(0x05)));
-        TEST_ASSERT(collector.get_matches()[1].check("**/b/**", { "a", "c" }, i2ptr(0x0B)));
-        TEST_ASSERT(collector.get_matches()[2].check("**", { "a", "b", "c" }, i2ptr(0x07)));
-        TEST_ASSERT(collector.get_matches()[3].check("a/*/c", { "b" }, i2ptr(0x04)));
-        TEST_ASSERT(collector.get_matches()[4].check("a/**", { "b", "c" }, i2ptr(0x09)));
-        TEST_ASSERT(collector.get_matches()[5].check("a/b/c", {}, i2ptr(0x03)));
+        TEST_ASSERT(collector.get_matches()[1].check("**", { "a", "b", "c" }, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[2].check("a/*/c", { "b" }, i2ptr(0x04)));
+        TEST_ASSERT(collector.get_matches()[3].check("a/**", { "b", "c" }, i2ptr(0x09)));
+        TEST_ASSERT(collector.get_matches()[4].check("a/b/c", {}, i2ptr(0x03)));
     }
     {
         Collector collector;
@@ -986,6 +984,14 @@ void test_route()
         TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
         TEST_ASSERT(collector.get_matches()[0].check("**/c/*", { "z" }, i2ptr(0x0A)));
         TEST_ASSERT(collector.get_matches()[1].check("**", { "c", "z" }, i2ptr(0x07)));
+    }
+    {
+        Collector collector; // The second ** in "**/b/**" is treated verbatim.
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "z/b/**", key_buf, &collector, Collector::trampoline));
+        TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
+        TEST_ASSERT(collector.get_matches()[0].check("*/b/*", { "z", "**" }, i2ptr(0x05)));
+        TEST_ASSERT(collector.get_matches()[1].check("**/b/**", { "z" }, i2ptr(0x0B)));
+        TEST_ASSERT(collector.get_matches()[2].check("**", { "z", "b", "**" }, i2ptr(0x07)));
     }
 
     // Cleanup.

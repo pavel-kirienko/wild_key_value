@@ -40,7 +40,7 @@
 ///         printf("key: '%s', value: %p\n", key_buf, val);
 ///     }
 ///
-///     // Erase a key:
+///     // To erase a key, set its value to NULL:
 ///     void* val = wkv_set(&kv, "foo/bar", nullptr);
 ///     if (val == nullptr) { /* Key did not exist */ }
 ///     else {
@@ -771,7 +771,49 @@ struct _wkv_route_t
     struct wkv_str_t sub_multi;  // '**'
 };
 
-/// TODO REFACTOR
+static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
+                               const struct wkv_node_t* const         node,
+                               const struct _wkv_split_t              qs,
+                               const size_t                           prefix_len,
+                               const struct wkv_substitution_t* const sub_head,
+                               struct wkv_substitution_t* const       sub_tail);
+
+static inline void* _wkv_route_sub(const struct _wkv_route_t* const       ctx,
+                                   struct wkv_edge_t* const               edge,
+                                   const struct _wkv_split_t              qs,
+                                   const size_t                           prefix_len,
+                                   const struct wkv_substitution_t* const sub_head,
+                                   struct wkv_substitution_t* const       sub_tail,
+                                   const bool                             multi)
+{
+    WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
+    void* result = NULL;
+    // Create a new substitution for the current key segment and link it into the list.
+    struct wkv_substitution_t        sub          = { qs.head, NULL };
+    const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
+    if (sub_tail != NULL) {
+        sub_tail->next = &sub;
+    }
+    const size_t key_len = prefix_len + edge->seg_len;
+    if (qs.last) {
+        if (edge->node.value != NULL) {
+            result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
+        }
+    } else {
+        struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep);
+        result                      = _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub);
+        // TODO Prevent double multi
+        if (multi && (result == NULL)) {
+            sub.next = NULL;
+            // Sadly this cannot be a tail call because we carry a pointer to &sub.
+            // This is also why we can't replace this with a loop -- we need to allocate a new sub for each iteration.
+            result = _wkv_route_sub(ctx, edge, qs_next, prefix_len, sub_head_new, &sub, true);
+        }
+        sub.next = NULL;
+    }
+    return result;
+}
+
 static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const struct wkv_node_t* const         node,
                                const struct _wkv_split_t              qs,
@@ -781,56 +823,18 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     void* result = NULL;
-    // Single-segment substitution case.
     {
         const ptrdiff_t k = _wkv_bisect(node, ctx->sub_single);
         if (k >= 0) {
-            struct wkv_edge_t* const edge = node->edges[k];
-            // Create a new substitution for the current key segment and link it into the list.
-            struct wkv_substitution_t        sub          = { qs.head, NULL };
-            const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
-            if (sub_tail != NULL) {
-                sub_tail->next = &sub;
-            }
-            const size_t key_len = prefix_len + edge->seg_len;
-            if (qs.last) {
-                if (edge->node.value != NULL) {
-                    result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
-                }
-            } else {
-                result =
-                  _wkv_route(ctx, &edge->node, _wkv_split(qs.tail, ctx->self->sep), key_len + 1, sub_head_new, &sub);
-            }
+            result = _wkv_route_sub(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, false);
         }
     }
-    // Multi-segment substitution case.
     if (result == NULL) {
         const ptrdiff_t k = _wkv_bisect(node, ctx->sub_multi);
         if (k >= 0) {
-            struct wkv_edge_t* const edge = node->edges[k];
-            // Create a new substitution for the current key segment and link it into the list.
-            struct wkv_substitution_t        sub          = { qs.head, NULL };
-            const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
-            if (sub_tail != NULL) {
-                sub_tail->next = &sub;
-            }
-            const size_t        key_len = prefix_len + edge->seg_len;
-            struct _wkv_split_t qs2     = qs;
-            while (result == NULL) {
-                if (qs2.last) {
-                    if (edge->node.value != NULL) {
-                        result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
-                    }
-                    break;
-                }
-                result =
-                  _wkv_route(ctx, &edge->node, _wkv_split(qs2.tail, ctx->self->sep), key_len + 1, sub_head_new, &sub);
-                sub.next = NULL;
-                qs2      = _wkv_split(qs2.tail, ctx->self->sep);
-            }
+            result = _wkv_route_sub(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, true);
         }
     }
-    // Verbatim match case.
     if (result == NULL) {
         const ptrdiff_t k = _wkv_bisect(node, qs.head);
         if (k >= 0) {

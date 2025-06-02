@@ -735,9 +735,8 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                 result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, any_exp || x_any);
             }
             if (x_any && (result == NULL)) {
+                // TODO: MATCH ZERO SEGMENTS AS WELL
                 // Expand "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
-                // However, we do not allow more than one any-segment substitution in the query, because it leads to
-                // fast growth of the search space and the possibility of matching the same node multiple times.
                 sub.next = NULL;
                 result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, false);
             }

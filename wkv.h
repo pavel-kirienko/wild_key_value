@@ -276,19 +276,19 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 
 /// A wildcard is a pattern that contains substitution symbols. WKV currently recognizes two types of substitutions:
 ///
-/// Single segment substitution: "/abc/*/def" -- matches "/abc/123/def", with "123" being the substitution.
+/// Single-segment substitution: "/abc/*/def" -- matches "/abc/123/def", with "123" being the substitution.
 /// The single-segment substitution symbol must be the only symbol in the segment;
 /// otherwise, the segment is treated as a literal (matches only itself).
 ///
-/// Recursive substitution: "abc/**/def" -- matches any number of segments, e.g. "abc/123/456/def".
+/// Multi-segment substitution: "abc/**/def" -- matches any positive number of segments, e.g. "abc/123/456/def".
 /// It is treated as an infinite sequence of single-segment substitutions:
 /// "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", ...
-/// There may be at most one recursive substitution in the pattern; if more are found, only the first one has effect,
-/// while all subsequent ones are treated as single-segment substitutions. That is, the following two are equivalent:
-/// "abc/**/def/**" and "abc/**/def/*". This behavior should not be relied upon because it may change in a future
-/// minor revision; for reasons of future compatibility, assume this behavior to be unspecified.
+/// There may be at most one multi-segment substitution in the pattern; if more are found, only the first one has
+/// effect, while all subsequent ones are treated as single-segment substitutions. That is, the following two are
+/// equivalent: "abc/**/def/**" and "abc/**/def/*". This behavior should not be relied upon because it may change in a
+/// future minor revision; hence, patterns with multiple multi-segment substitutions should be avoided.
 ///
-/// The reason for allowing at most one ** is that multiple recursive substitutions create ambiguity in the query,
+/// The reason for allowing at most one ** is that multiple multi-segment substitutions create ambiguity in the query,
 /// which in certain scenarios causes the matcher to match the same key multiple times, plus it causes an exponential
 /// increase in the computational complexity. It appears to be difficult to avoid these issues without a significant
 /// performance and memory penalty, hence the limitation is imposed.
@@ -301,9 +301,9 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 /// 3. "456"
 /// 4. "xyz"
 ///
-/// If the pattern contains only non-recursive substitutions, then the number of substitutions equals the number of
-/// substitution segments in the query. If a recursive substitution is present, then the number of substitutions
-/// may be greater.
+/// If the pattern contains only single-segment substitutions, then the number of reported found substitutions equals
+/// the number of substitution segments in the query. If a multi-segment substitution is present, then the number of
+/// substitutions may be greater.
 struct wkv_substitution_t
 {
     struct wkv_str_t           str;  ///< The string that matched the wildcard in the query is the base type.
@@ -705,13 +705,13 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                const size_t                           prefix_len,
                                const struct wkv_substitution_t* const sub_head,
                                struct wkv_substitution_t* const       sub_tail,
-                               const bool                             recursing)
+                               const bool                             multi_exp)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
-    const bool x_rec  = (qs.head.len == 2) && (qs.head.str[0] == ctx->self->sub) && (qs.head.str[1] == ctx->self->sub);
-    const bool x_seg  = (qs.head.len == 1) && (qs.head.str[0] == ctx->self->sub);
+    const bool x_mult = (qs.head.len == 2) && (qs.head.str[0] == ctx->self->sub) && (qs.head.str[1] == ctx->self->sub);
+    const bool x_sing = (qs.head.len == 1) && (qs.head.str[0] == ctx->self->sub);
     void*      result = NULL;
-    if (x_seg || x_rec) {
+    if (x_sing || x_mult) {
         const struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep); // compute only once before the loop
         for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
             struct wkv_edge_t* const edge = node->edges[i];
@@ -727,14 +727,15 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                     result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
                 }
             } else {
-                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, recursing || x_rec);
+                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, multi_exp || x_mult);
             }
-            if (x_rec && (!recursing) && (result == NULL)) {
+            if (x_mult && (!multi_exp) && (result == NULL)) {
                 // Expand "a/**/z" ==> "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
-                // However, we do not allow more than one recursive segment in the query, because it leads to fast
-                // growth of the search space and the possibility of matching the same node multiple times.
+                // However, we do not allow more than one multi-segment substitution in the query, because it leads to
+                // fast growth of the search space and the possibility of matching the same node multiple times.
+                // TODO: allow multi-segment to match nothing, i.e. "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", etc?
                 sub.next = NULL;
-                result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, recursing);
+                result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, multi_exp);
             }
         }
     } else {
@@ -753,7 +754,7 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                     key_len + 1,
                                     sub_head,
                                     sub_tail,
-                                    recursing);
+                                    multi_exp);
             }
         }
     }
@@ -766,8 +767,8 @@ struct _wkv_route_t
     void*         context; ///< Passed to the callback.
     _wkv_hit_cb_t callback;
     // Pre-created patterns to avoid construction while searching. Must be initialized before use!
-    struct wkv_str_t sub_segment;   // '*'
-    struct wkv_str_t sub_recursive; // '**'
+    struct wkv_str_t sub_single; // '*'
+    struct wkv_str_t sub_multi;  // '**'
 };
 
 /// TODO REFACTOR
@@ -782,7 +783,7 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
     void* result = NULL;
     // Single-segment substitution case.
     {
-        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_segment);
+        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_single);
         if (k >= 0) {
             struct wkv_edge_t* const edge = node->edges[k];
             // Create a new substitution for the current key segment and link it into the list.
@@ -802,9 +803,9 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
             }
         }
     }
-    // Recursive substitution case.
+    // Multi-segment substitution case.
     if (result == NULL) {
-        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_recursive);
+        const ptrdiff_t k = _wkv_bisect(node, ctx->sub_multi);
         if (k >= 0) {
             struct wkv_edge_t* const edge = node->edges[k];
             // Create a new substitution for the current key segment and link it into the list.

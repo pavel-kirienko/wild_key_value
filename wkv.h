@@ -70,6 +70,9 @@
 ///         return NULL;
 ///     }
 ///
+/// This is the v1 release. When an API-incompatible v2 is published, all definitions will be prefixed with "wkv2"
+/// instead of "wkv", and the file will be renamed to "wkv2.h" to ensure safe coexistence with the v1.
+///
 /// See also:
 /// - Cavl <https://github.com/pavel-kirienko/cavl> -- a single-header, efficient and robust AVL tree implementation.
 /// - O1Heap <https://github.com/pavel-kirienko/o1heap> -- a deterministic memory manager for hard-real-time
@@ -306,6 +309,7 @@ static inline void* wkv_at(struct wkv_t* const self, size_t index, char* const k
 /// substitutions may be greater.
 struct wkv_substitution_t
 {
+    // TODO size_t index;  ///< Zero-based ordinal of the substitution token as occurred in the pattern.
     struct wkv_str_t           str;  ///< The string that matched the wildcard in the query is the base type.
     struct wkv_substitution_t* next; ///< Next substitution in the linked list, NULL if this is the last one.
 };
@@ -819,26 +823,21 @@ static inline void* _wkv_route_sub_any(const struct _wkv_route_t* const       ct
                                        struct wkv_substitution_t* const       sub_tail)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
-    void* result = NULL;
-    // Create a new substitution for the current key segment and link it into the list.
-    struct wkv_substitution_t        sub          = { qs.head, NULL };
-    const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
-    if (sub_tail != NULL) {
-        sub_tail->next = &sub;
-    }
     const size_t key_len = prefix_len + edge->seg_len;
-    if (qs.last) {
-        if (edge->node.value != NULL) {
-            result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
+    void*        result  = _wkv_route(ctx, &edge->node, qs, key_len + 1, sub_head, sub_tail, true);
+    if (result == NULL) {
+        struct wkv_substitution_t        sub          = { qs.head, NULL };
+        const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
+        if (sub_tail != NULL) {
+            sub_tail->next = &sub;
         }
-    } else {
-        const struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep);
-        result = _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, true);
-        if (result == NULL) {
+        if (qs.last) {
+            if (edge->node.value != NULL) {
+                result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
+            }
+        } else { // this is just a loop where at each iteration we shift the query and add a new substitution
             sub.next = NULL;
-            // Sadly this cannot be a tail call because we carry a pointer to &sub.
-            // This is also why we can't replace this with a loop -- we need to allocate a new sub for each iteration.
-            result = _wkv_route_sub_any(ctx, edge, qs_next, prefix_len, sub_head_new, &sub);
+            result = _wkv_route_sub_any(ctx, edge, _wkv_split(qs.tail, ctx->self->sep), prefix_len, sub_head_new, &sub);
         }
     }
     return result;

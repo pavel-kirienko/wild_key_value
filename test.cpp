@@ -132,6 +132,15 @@ public:
         return static_cast<Collector*>(context)->on_hit(self, hit);
     }
 
+    void print() const
+    {
+        std::cout << matches_.size() << " matches:" << std::endl;
+        for (const auto& match : matches_) {
+            std::cout << "'" << match.key << "' --> " << match.value << "; {" << match.join_substitutions(",") << "}"
+                      << std::endl;
+        }
+    }
+
 private:
     [[nodiscard]] void* on_hit(::wkv_t*, const ::wkv_hit_t hit)
     {
@@ -929,17 +938,18 @@ void test_route()
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "", key_buf, &collector, Collector::trampoline));
-        TEST_ASSERT(collector.get_matches()[0].check("**", { "" }, i2ptr(0x07)));
-        TEST_ASSERT(collector.get_matches()[1].check("", {}, i2ptr(0x01)));
-        TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
+        TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
+        TEST_ASSERT(collector.get_matches()[0].check("**/", {}, i2ptr(0x08)));
+        TEST_ASSERT(collector.get_matches()[1].check("**", { "" }, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[2].check("", {}, i2ptr(0x01)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "/", key_buf, &collector, Collector::trampoline));
+        TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
         TEST_ASSERT(collector.get_matches()[0].check("**/", { "" }, i2ptr(0x08)));
         TEST_ASSERT(collector.get_matches()[1].check("**", { "", "" }, i2ptr(0x07)));
         TEST_ASSERT(collector.get_matches()[2].check("/", {}, i2ptr(0x02)));
-        TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
     }
     {
         Collector collector;
@@ -969,6 +979,13 @@ void test_route()
         TEST_ASSERT(collector.get_matches()[3].check("a/*/c", { "b" }, i2ptr(0x04)));
         TEST_ASSERT(collector.get_matches()[4].check("a/**", { "b", "c" }, i2ptr(0x09)));
         TEST_ASSERT(collector.get_matches()[5].check("a/b/c", {}, i2ptr(0x03)));
+    }
+    {
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "c/z", key_buf, &collector, Collector::trampoline));
+        TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
+        TEST_ASSERT(collector.get_matches()[0].check("**/c/*", { "z" }, i2ptr(0x0A)));
+        TEST_ASSERT(collector.get_matches()[1].check("**", { "c", "z" }, i2ptr(0x07)));
     }
 
     // Cleanup.
@@ -1009,6 +1026,40 @@ void test_route_2()
     TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
+
+void test_route_3()
+{
+    Memory mem(50);
+    wkv_t  wkv  = wkv_init(Memory::trampoline);
+    wkv.context = &mem;
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x01), wkv_add(&wkv, "a/**/z", i2ptr(0x01)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x02), wkv_add(&wkv, "a/*/**/z", i2ptr(0x02)));
+    char key_buf[WKV_KEY_MAX_LEN + 1];
+    {
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/z", key_buf, &collector, Collector::trampoline));
+        TEST_ASSERT(collector.get_only().check("a/**/z", {}, i2ptr(0x01)));
+    }
+    {
+        Collector collector;
+        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/z", key_buf, &collector, Collector::trampoline));
+        TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
+        TEST_ASSERT(collector.get_matches()[0].check("a/*/**/z", { "b" }, i2ptr(0x02)));
+        TEST_ASSERT(collector.get_matches()[1].check("a/**/z", { "b" }, i2ptr(0x01)));
+    }
+    // Cleanup.
+    while (!wkv_is_empty(&wkv)) {
+        size_t      key_len = WKV_KEY_MAX_LEN + 1;
+        void* const v       = wkv_at(&wkv, 0, key_buf, &key_len);
+        TEST_ASSERT(nullptr != v);
+        TEST_ASSERT(key_len <= WKV_KEY_MAX_LEN);
+        TEST_ASSERT_EQUAL_PTR(v, wkv_set(&wkv, key_buf, nullptr));
+    }
+    TEST_ASSERT(wkv_is_empty(&wkv));
+    TEST_ASSERT_EQUAL_size_t(0, count(&wkv));
+    TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
+}
+
 } // namespace
 
 int main(const int argc, const char* const argv[])
@@ -1027,6 +1078,7 @@ int main(const int argc, const char* const argv[])
     RUN_TEST(test_match_3);
     RUN_TEST(test_route);
     RUN_TEST(test_route_2);
+    RUN_TEST(test_route_3);
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)
 }

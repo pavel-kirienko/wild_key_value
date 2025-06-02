@@ -771,7 +771,7 @@ struct _wkv_route_t
     struct wkv_str_t sub_multi;  // '**'
 };
 
-/// The multi_count is used to track the number of occurrences of the multi-segment substitution pattern in the path.
+/// The multi_seen is used to track occurrences of the multi-segment substitution pattern in the path.
 /// We do not allow more than one per path to manage the search complexity and avoid double-matching the query key.
 static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const struct wkv_node_t* const         node,
@@ -779,17 +779,44 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const size_t                           prefix_len,
                                const struct wkv_substitution_t* const sub_head,
                                struct wkv_substitution_t* const       sub_tail,
-                               const size_t                           multi_count);
+                               const bool                             multi_seen);
 
-/// Extracted into a separate function mostly because we have to create a new substitution for each matched query
-/// segment, which we do by allocating a new stack frame for each segment.
-static inline void* _wkv_route_sub(const struct _wkv_route_t* const       ctx,
-                                   struct wkv_edge_t* const               edge,
-                                   const struct _wkv_split_t              qs,
-                                   const size_t                           prefix_len,
-                                   const struct wkv_substitution_t* const sub_head,
-                                   struct wkv_substitution_t* const       sub_tail,
-                                   const size_t                           multi_count)
+static inline void* _wkv_route_sub_one(const struct _wkv_route_t* const       ctx,
+                                       struct wkv_edge_t* const               edge,
+                                       const struct _wkv_split_t              qs,
+                                       const size_t                           prefix_len,
+                                       const struct wkv_substitution_t* const sub_head,
+                                       struct wkv_substitution_t* const       sub_tail,
+                                       const bool                             multi_seen)
+{
+    WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
+    struct wkv_substitution_t        sub          = { qs.head, NULL };
+    const struct wkv_substitution_t* sub_head_new = (sub_head == NULL) ? &sub : sub_head;
+    if (sub_tail != NULL) {
+        sub_tail->next = &sub;
+    }
+    if (qs.last) {
+        if (edge->node.value != NULL) {
+            return ctx->callback(ctx->self, ctx->context, &edge->node, prefix_len + edge->seg_len, sub_head_new);
+        }
+    } else {
+        return _wkv_route(ctx, //
+                          &edge->node,
+                          _wkv_split(qs.tail, ctx->self->sep),
+                          prefix_len + edge->seg_len + 1,
+                          sub_head_new,
+                          &sub,
+                          multi_seen);
+    }
+    return NULL;
+}
+
+static inline void* _wkv_route_sub_any(const struct _wkv_route_t* const       ctx,
+                                       struct wkv_edge_t* const               edge,
+                                       const struct _wkv_split_t              qs,
+                                       const size_t                           prefix_len,
+                                       const struct wkv_substitution_t* const sub_head,
+                                       struct wkv_substitution_t* const       sub_tail)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     void* result = NULL;
@@ -805,16 +832,14 @@ static inline void* _wkv_route_sub(const struct _wkv_route_t* const       ctx,
             result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
         }
     } else {
-        struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep);
-        result = _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, multi_count);
-        // If multi_count>1, then we saw more than one multi-segment substitution in the path, which is not allowed.
-        if ((multi_count == 1) && (result == NULL)) {
+        const struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep);
+        result = _wkv_route(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, true);
+        if (result == NULL) {
             sub.next = NULL;
             // Sadly this cannot be a tail call because we carry a pointer to &sub.
             // This is also why we can't replace this with a loop -- we need to allocate a new sub for each iteration.
-            result = _wkv_route_sub(ctx, edge, qs_next, prefix_len, sub_head_new, &sub, multi_count);
+            result = _wkv_route_sub_any(ctx, edge, qs_next, prefix_len, sub_head_new, &sub);
         }
-        sub.next = NULL;
     }
     return result;
 }
@@ -825,20 +850,21 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                const size_t                           prefix_len,
                                const struct wkv_substitution_t* const sub_head,
                                struct wkv_substitution_t* const       sub_tail,
-                               const size_t                           multi_count)
+                               const bool                             multi_seen)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
     void* result = NULL;
     {
         const ptrdiff_t k = _wkv_bisect(node, ctx->sub_single);
         if (k >= 0) {
-            result = _wkv_route_sub(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, multi_count);
+            result = _wkv_route_sub_one(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, multi_seen);
         }
     }
     if (result == NULL) {
         const ptrdiff_t k = _wkv_bisect(node, ctx->sub_multi);
         if (k >= 0) {
-            result = _wkv_route_sub(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, multi_count + 1);
+            result = multi_seen ? _wkv_route_sub_one(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail, true)
+                                : _wkv_route_sub_any(ctx, node->edges[k], qs, prefix_len, sub_head, sub_tail);
         }
     }
     if (result == NULL) {
@@ -857,7 +883,7 @@ static inline void* _wkv_route(const struct _wkv_route_t* const       ctx,
                                     key_len + 1,
                                     sub_head,
                                     sub_tail,
-                                    multi_count);
+                                    multi_seen);
             }
         }
     }

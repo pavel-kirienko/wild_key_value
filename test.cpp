@@ -711,6 +711,7 @@ void test_match_2()
     add("a/b/c/d/a/b/c/d", 0xABCDABCD);
     add("a/b/d/b/c/d/", 0xABDBCD0);
     add("a/f/c/d/b/c/d", 0xAFCDBCD);
+    add("a/f/c/d/**/c/d", 0xAFCD0CD);
     print(&wkv.root);
     std::cout << "Fragments: " << mem.get_fragments() << ", OOMs: " << mem.get_oom_count() << std::endl;
     char key_buf[WKV_KEY_MAX_LEN + 1];
@@ -719,12 +720,13 @@ void test_match_2()
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/**/d", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(5, col.get_matches().size());
+        TEST_ASSERT_EQUAL_size_t(6, col.get_matches().size());
         TEST_ASSERT(col.get_matches()[0].check("a/b/c/d", { "b", "c" }, i2ptr(0xABCD)));
         TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/a/b/c/d", { "b", "c", "d", "a", "b", "c" }, i2ptr(0xABCDABCD)));
         TEST_ASSERT(col.get_matches()[2].check("a/b/c/d/b/c/d", { "b", "c", "d", "b", "c" }, i2ptr(0xABCDBCD)));
         TEST_ASSERT(col.get_matches()[3].check("a/b/d/b/c/d", { "b", "d", "b", "c" }, i2ptr(0xABDBCD)));
         TEST_ASSERT(col.get_matches()[4].check("a/f/c/d/b/c/d", { "f", "c", "d", "b", "c" }, i2ptr(0xAFCDBCD)));
+        TEST_ASSERT(col.get_matches()[5].check("a/f/c/d/**/c/d", { "f", "c", "d", "**", "c" }, i2ptr(0xAFCD0CD)));
     }
     {
         Collector col;
@@ -745,22 +747,22 @@ void test_match_2()
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/c/**/c/d", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(3, col.get_matches().size());
+        TEST_ASSERT_EQUAL_size_t(4, col.get_matches().size());
         TEST_ASSERT(col.get_matches()[0].check("a/b/c/d/a/b/c/d", { "b", "d", "a", "b" }, i2ptr(0xABCDABCD)));
         TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", { "b", "d", "b" }, i2ptr(0xABCDBCD)));
         TEST_ASSERT(col.get_matches()[2].check("a/f/c/d/b/c/d", { "f", "d", "b" }, i2ptr(0xAFCDBCD)));
+        TEST_ASSERT(col.get_matches()[3].check("a/f/c/d/**/c/d", { "f", "d", "**" }, i2ptr(0xAFCD0CD)));
     }
     {
-        Collector col; // If more than one ** is present, the non-first ** is treated as *.
+        Collector col; // If more than one ** is present, the non-first ** is treated verbatim.
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**/c/**/c/d", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(0, col.get_matches().size());
     }
     {
-        Collector col; // If more than one ** is present, the non-first ** is treated as *.
+        Collector col; // If more than one ** is present, the non-first ** is treated verbatim.
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**/c/d/**/c/d", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d/b/c/d", { "a", "b", "b" }, i2ptr(0xABCDBCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/f/c/d/b/c/d", { "a", "f", "b" }, i2ptr(0xAFCDBCD)));
+        TEST_ASSERT_EQUAL_size_t(1, col.get_matches().size());
+        TEST_ASSERT(col.get_matches()[0].check("a/f/c/d/**/c/d", { "a", "f" }, i2ptr(0xAFCD0CD)));
     }
     {
         Collector col;
@@ -798,29 +800,14 @@ void test_match_2()
         TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
     }
     {
-        Collector col; // If more than one ** is present, the non-first ** is treated as *.
+        Collector col; // If more than one ** is present, the non-first ** is treated verbatim.
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**/**/", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
+        TEST_ASSERT_EQUAL_size_t(0, col.get_matches().size());
     }
     {
-        Collector col; // If more than one ** is present, the non-first ** is treated as *.
+        Collector col; // If more than one ** is present, the non-first ** is treated verbatim.
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/**/**/", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
-    }
-    {
-        Collector col; // If more than one ** is present, the non-first ** is treated as *.
-        TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "**/b/c/**", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT_EQUAL_size_t(6, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d", { "a", "d" }, i2ptr(0xABCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", { "a", "b", "c", "d", "d" }, i2ptr(0xABCDBCD))); // sic!
-        TEST_ASSERT(col.get_matches()[2].check("a/b/c/d/a/b/c/d", { "a", "b", "c", "d", "a", "d" }, i2ptr(0xABCDABCD)));
-        TEST_ASSERT(col.get_matches()[3].check("a/b/d/b/c/", { "a", "b", "d", "" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[4].check("a/b/d/b/c/d", { "a", "b", "d", "d" }, i2ptr(0xABDBCD)));
-        TEST_ASSERT(col.get_matches()[5].check("a/f/c/d/b/c/d", { "a", "f", "c", "d", "d" }, i2ptr(0xAFCDBCD)));
+        TEST_ASSERT_EQUAL_size_t(0, col.get_matches().size());
     }
     {
         Collector col;

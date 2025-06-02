@@ -712,10 +712,11 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                                const bool                             any_exp)
 {
     WKV_ASSERT((sub_tail == NULL) || (sub_tail->next == NULL));
-    const bool x_mult = (qs.head.len == 2) && (qs.head.str[0] == ctx->self->sub) && (qs.head.str[1] == ctx->self->sub);
-    const bool x_sing = (qs.head.len == 1) && (qs.head.str[0] == ctx->self->sub);
+    const bool x_any =
+      (qs.head.len == 2) && (qs.head.str[0] == ctx->self->sub) && (qs.head.str[1] == ctx->self->sub) && (!any_exp);
+    const bool x_one  = (qs.head.len == 1) && (qs.head.str[0] == ctx->self->sub);
     void*      result = NULL;
-    if (x_sing || x_mult) {
+    if (x_one || x_any) {
         const struct _wkv_split_t qs_next = _wkv_split(qs.tail, ctx->self->sep); // compute only once before the loop
         for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
             struct wkv_edge_t* const edge = node->edges[i];
@@ -731,14 +732,14 @@ static inline void* _wkv_match(const struct _wkv_match_t* const       ctx,
                     result = ctx->callback(ctx->self, ctx->context, &edge->node, key_len, sub_head_new);
                 }
             } else {
-                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, any_exp || x_mult);
+                result = _wkv_match(ctx, &edge->node, qs_next, key_len + 1, sub_head_new, &sub, any_exp || x_any);
             }
-            if (x_mult && (!any_exp) && (result == NULL)) {
+            if (x_any && (result == NULL)) {
                 // Expand "a/**/z" ==> "a/z", "a/*/z", "a/*/*/z", "a/*/*/*/z", etc.
                 // However, we do not allow more than one any-segment substitution in the query, because it leads to
                 // fast growth of the search space and the possibility of matching the same node multiple times.
                 sub.next = NULL;
-                result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, any_exp);
+                result   = _wkv_match(ctx, &edge->node, qs, key_len + 1, sub_head_new, &sub, false);
             }
         }
     } else {

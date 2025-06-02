@@ -923,6 +923,7 @@ void test_route()
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x08), wkv_add(&wkv, "**/", i2ptr(0x08)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x09), wkv_add(&wkv, "a/**", i2ptr(0x09)));
     TEST_ASSERT_EQUAL_PTR(i2ptr(0x0A), wkv_add(&wkv, "**/c/*", i2ptr(0x0A)));
+    TEST_ASSERT_EQUAL_PTR(i2ptr(0x0B), wkv_add(&wkv, "**/b/**", i2ptr(0x0B))); // second ** is treated as *
 
     // Test same keys, get different results.
     {
@@ -943,18 +944,12 @@ void test_route()
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c/", key_buf, &collector, Collector::trampoline));
-        for (const auto& m : collector.get_matches()) {
-            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
-        }
         TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c", key_buf, &collector, Collector::trampoline));
-        for (const auto& m : collector.get_matches()) {
-            std::cout << "Hit: " << m.key << " -> " << m.join_substitutions() << " = " << m.value << std::endl;
-        }
-        TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
+        TEST_ASSERT_EQUAL_size_t(6, collector.get_matches().size());
     }
 
     // Cleanup.

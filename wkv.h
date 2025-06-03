@@ -709,8 +709,8 @@ static inline void* _wkv_hit_node(const struct _wkv_hit_ctx_t* const     ctx,
 
 struct _wkv_substitution_list_t
 {
-    wkv_substitution_t* head;
-    wkv_substitution_t* tail;
+    struct wkv_substitution_t* head;
+    struct wkv_substitution_t* tail;
 };
 
 #define _wkv_SUBSTITUTION_APPEND(old_list, new_list, str)           \

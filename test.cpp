@@ -8,6 +8,7 @@
 #include <ctime>
 #include <iostream>
 #include <algorithm>
+#include <ranges>
 #include <string_view>
 #include <string>
 #include <vector>
@@ -84,22 +85,22 @@ class Collector final
 public:
     struct Hit
     {
-        std::string              key;
-        std::vector<std::string> substitutions;
-        void*                    value = nullptr;
+        std::string                                      key;
+        std::vector<std::pair<std::size_t, std::string>> substitutions;
+        void*                                            value = nullptr;
 
         explicit Hit(const ::wkv_hit_t& hit) : key(view(hit.key)), value(hit.value)
         {
             const ::wkv_substitution_t* s = hit.substitutions;
             while (s != nullptr) {
-                substitutions.emplace_back(view(s->str));
+                substitutions.emplace_back(s->ordinal, view(s->str));
                 s = s->next;
             }
         }
 
-        [[nodiscard]] bool check(const std::string_view          key,
-                                 const std::vector<std::string>& substitutions,
-                                 const void* const               value) const
+        [[nodiscard]] bool check(const std::string_view                                  key,
+                                 const std::vector<std::pair<std::size_t, std::string>>& substitutions,
+                                 const void* const                                       value) const
         {
             return (this->key == key) && (this->substitutions.size() == substitutions.size()) &&
                    std::equal(this->substitutions.begin(), this->substitutions.end(), substitutions.begin()) &&
@@ -109,11 +110,23 @@ public:
         [[nodiscard]] std::string join_substitutions(const std::string_view sep = "/") const
         {
             std::string result;
-            for (const auto& s : substitutions) {
+            for (const auto& val : substitutions | std::views::values) {
                 if (!result.empty()) {
                     result += sep;
                 }
-                result += s;
+                result += val;
+            }
+            return result;
+        }
+
+        [[nodiscard]] std::string substitutions_to_string() const
+        {
+            std::string result;
+            for (const auto& s : substitutions) {
+                if (!result.empty()) {
+                    result += " ";
+                }
+                result += "#" + std::to_string(s.first) + ":" + s.second;
             }
             return result;
         }
@@ -136,7 +149,7 @@ public:
     {
         std::cout << matches_.size() << " matches:" << std::endl;
         for (const auto& match : matches_) {
-            std::cout << "'" << match.key << "' --> " << match.value << "; {" << match.join_substitutions(",") << "}"
+            std::cout << "'" << match.key << "' --> " << match.value << "; {" << match.substitutions_to_string() << "}"
                       << std::endl;
         }
     }
@@ -234,7 +247,7 @@ void test_basic()
     // Check indexing. Simply iterate until we get all keys and ensure that each occurred exactly once.
     {
         const size_t                    expected_count = count(&wkv);
-        std::unordered_set<std::string> keys{ "foo", "/foo/", "//foo//", "/foo/bar", "/foo/bar/", "/foo/bar/baz", "" };
+        std::unordered_set<std::string> keys{"foo", "/foo/", "//foo//", "/foo/bar", "/foo/bar/", "/foo/bar/baz", ""};
         for (size_t i = 0; i < expected_count; ++i) {
             char        key[WKV_KEY_MAX_LEN + 2];
             size_t      key_len = WKV_KEY_MAX_LEN + 1;
@@ -435,37 +448,37 @@ void test_reconstruct()
 
     char buf[WKV_KEY_MAX_LEN + 1];
 
-    const ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, { 4, "xx/a" });
+    const ::wkv_node_t* n = _wkv_get(&wkv, &wkv.root, {4, "xx/a"});
     TEST_ASSERT(n->value == i2ptr(0xA));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx/a", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, { 5, "xx//b" });
+    n = _wkv_get(&wkv, &wkv.root, {5, "xx//b"});
     TEST_ASSERT(n->value == i2ptr(0xB));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("xx//b", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, { 0, "" });
+    n = _wkv_get(&wkv, &wkv.root, {0, ""});
     TEST_ASSERT(n->value == i2ptr(0xC));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, { 1, "/" });
+    n = _wkv_get(&wkv, &wkv.root, {1, "/"});
     TEST_ASSERT(n->value == i2ptr(0xD));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, { 1, "e" });
+    n = _wkv_get(&wkv, &wkv.root, {1, "e"});
     TEST_ASSERT(n->value == i2ptr(0xE));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("e", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, { 7, "/xx//f/" });
+    n = _wkv_get(&wkv, &wkv.root, {7, "/xx//f/"});
     TEST_ASSERT(n->value == i2ptr(0xF));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("/xx//f/", buf);
 
-    n = _wkv_get(&wkv, &wkv.root, { 2, "//" });
+    n = _wkv_get(&wkv, &wkv.root, {2, "//"});
     TEST_ASSERT(n->value == i2ptr(0x1));
     _wkv_reconstruct(n, wkv.sep, buf);
     TEST_ASSERT_EQUAL_STRING("//", buf);
@@ -561,53 +574,53 @@ void test_match()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
-        TEST_ASSERT(matches[0].check("a", { "a" }, i2ptr(0xA)));
-        TEST_ASSERT(matches[1].check("a1", { "a1" }, i2ptr(0xA1)));
-        TEST_ASSERT(matches[2].check("a2", { "a2" }, i2ptr(0xA2)));
+        TEST_ASSERT(matches[0].check("a", {{0, "a"}}, i2ptr(0xA)));
+        TEST_ASSERT(matches[1].check("a1", {{0, "a1"}}, i2ptr(0xA1)));
+        TEST_ASSERT(matches[2].check("a2", {{0, "a2"}}, i2ptr(0xA2)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/?", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
-        TEST_ASSERT(matches[0].check("a/b", { "b" }, i2ptr(0xB)));
-        TEST_ASSERT(matches[1].check("a/c", { "c" }, i2ptr(0xC)));
-        TEST_ASSERT(matches[2].check("a/d", { "d" }, i2ptr(0xD)));
+        TEST_ASSERT(matches[0].check("a/b", {{0, "b"}}, i2ptr(0xB)));
+        TEST_ASSERT(matches[1].check("a/c", {{0, "c"}}, i2ptr(0xC)));
+        TEST_ASSERT(matches[2].check("a/d", {{0, "d"}}, i2ptr(0xD)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/b", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
-        TEST_ASSERT(matches[0].check("a/b", { "a" }, i2ptr(0xB)));
-        TEST_ASSERT(matches[1].check("x/b", { "x" }, i2ptr(0x100)));
+        TEST_ASSERT(matches[0].check("a/b", {{0, "a"}}, i2ptr(0xB)));
+        TEST_ASSERT(matches[1].check("x/b", {{0, "x"}}, i2ptr(0x100)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/?/?", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(5, matches.size());
-        TEST_ASSERT(matches[0].check("a/b/1", { "a", "b", "1" }, i2ptr(0x1)));
-        TEST_ASSERT(matches[1].check("a/b/2", { "a", "b", "2" }, i2ptr(0x2)));
-        TEST_ASSERT(matches[2].check("a/c/1", { "a", "c", "1" }, i2ptr(0x3)));
-        TEST_ASSERT(matches[3].check("a/c/2", { "a", "c", "2" }, i2ptr(0x4)));
-        TEST_ASSERT(matches[4].check("a/d/5", { "a", "d", "5" }, i2ptr(0x5)));
+        TEST_ASSERT(matches[0].check("a/b/1", {{0, "a"}, {1, "b"}, {2, "1"}}, i2ptr(0x1)));
+        TEST_ASSERT(matches[1].check("a/b/2", {{0, "a"}, {1, "b"}, {2, "2"}}, i2ptr(0x2)));
+        TEST_ASSERT(matches[2].check("a/c/1", {{0, "a"}, {1, "c"}, {2, "1"}}, i2ptr(0x3)));
+        TEST_ASSERT(matches[3].check("a/c/2", {{0, "a"}, {1, "c"}, {2, "2"}}, i2ptr(0x4)));
+        TEST_ASSERT(matches[4].check("a/d/5", {{0, "a"}, {1, "d"}, {2, "5"}}, i2ptr(0x5)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/c/?", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
-        TEST_ASSERT(matches[0].check("a/c/1", { "a", "1" }, i2ptr(0x3)));
-        TEST_ASSERT(matches[1].check("a/c/2", { "a", "2" }, i2ptr(0x4)));
+        TEST_ASSERT(matches[0].check("a/c/1", {{0, "a"}, {1, "1"}}, i2ptr(0x3)));
+        TEST_ASSERT(matches[1].check("a/c/2", {{0, "a"}, {1, "2"}}, i2ptr(0x4)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/?/2", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
-        TEST_ASSERT(matches[0].check("a/b/2", { "b" }, i2ptr(0x2)));
-        TEST_ASSERT(matches[1].check("a/c/2", { "c" }, i2ptr(0x4)));
+        TEST_ASSERT(matches[0].check("a/b/2", {{0, "b"}}, i2ptr(0x2)));
+        TEST_ASSERT(matches[1].check("a/c/2", {{0, "c"}}, i2ptr(0x4)));
     }
 
     // Query recursive substitution.
@@ -616,19 +629,19 @@ void test_match()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/b/*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(2, matches.size());
-        TEST_ASSERT(matches[0].check("a/b/1", { "1" }, i2ptr(0x1)));
-        TEST_ASSERT(matches[1].check("a/b/2", { "2" }, i2ptr(0x2)));
+        TEST_ASSERT(matches[0].check("a/b/1", {{0, "1"}}, i2ptr(0x1)));
+        TEST_ASSERT(matches[1].check("a/b/2", {{0, "2"}}, i2ptr(0x2)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/d/*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(5, matches.size());
-        TEST_ASSERT(matches[0].check("a/d/5", { "5" }, i2ptr(0x5)));
-        TEST_ASSERT(matches[1].check("a/d/6/1", { "6", "1" }, i2ptr(0x101)));
-        TEST_ASSERT(matches[2].check("a/d/6/2", { "6", "2" }, i2ptr(0x102)));
-        TEST_ASSERT(matches[3].check("a/d/6/e", { "6", "e" }, i2ptr(0xE)));
-        TEST_ASSERT(matches[4].check("a/d/6/f", { "6", "f" }, i2ptr(0xF)));
+        TEST_ASSERT(matches[0].check("a/d/5", {{0, "5"}}, i2ptr(0x5)));
+        TEST_ASSERT(matches[1].check("a/d/6/1", {{0, "6"}, {0, "1"}}, i2ptr(0x101)));
+        TEST_ASSERT(matches[2].check("a/d/6/2", {{0, "6"}, {0, "2"}}, i2ptr(0x102)));
+        TEST_ASSERT(matches[3].check("a/d/6/e", {{0, "6"}, {0, "e"}}, i2ptr(0xE)));
+        TEST_ASSERT(matches[4].check("a/d/6/f", {{0, "6"}, {0, "f"}}, i2ptr(0xF)));
     }
     {
         Collector collector;
@@ -646,38 +659,38 @@ void test_match()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/?/6/*", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(4, matches.size());
-        TEST_ASSERT(matches[0].check("a/d/6/1", { "d", "1" }, i2ptr(0x101)));
-        TEST_ASSERT(matches[1].check("a/d/6/2", { "d", "2" }, i2ptr(0x102)));
-        TEST_ASSERT(matches[2].check("a/d/6/e", { "d", "e" }, i2ptr(0xE)));
-        TEST_ASSERT(matches[3].check("a/d/6/f", { "d", "f" }, i2ptr(0xF)));
+        TEST_ASSERT(matches[0].check("a/d/6/1", {{0, "d"}, {1, "1"}}, i2ptr(0x101)));
+        TEST_ASSERT(matches[1].check("a/d/6/2", {{0, "d"}, {1, "2"}}, i2ptr(0x102)));
+        TEST_ASSERT(matches[2].check("a/d/6/e", {{0, "d"}, {1, "e"}}, i2ptr(0xE)));
+        TEST_ASSERT(matches[3].check("a/d/6/f", {{0, "d"}, {1, "f"}}, i2ptr(0xF)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/?/6/*", nullptr, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(4, matches.size());
-        TEST_ASSERT(matches[0].check("", { "d", "1" }, i2ptr(0x101)));
-        TEST_ASSERT(matches[1].check("", { "d", "2" }, i2ptr(0x102)));
-        TEST_ASSERT(matches[2].check("", { "d", "e" }, i2ptr(0xE)));
-        TEST_ASSERT(matches[3].check("", { "d", "f" }, i2ptr(0xF)));
+        TEST_ASSERT(matches[0].check("", {{0, "d"}, {1, "1"}}, i2ptr(0x101)));
+        TEST_ASSERT(matches[1].check("", {{0, "d"}, {1, "2"}}, i2ptr(0x102)));
+        TEST_ASSERT(matches[2].check("", {{0, "d"}, {1, "e"}}, i2ptr(0xE)));
+        TEST_ASSERT(matches[3].check("", {{0, "d"}, {1, "f"}}, i2ptr(0xF)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/1", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
-        TEST_ASSERT(matches[0].check("a/b/1", { "a", "b" }, i2ptr(0x1)));
-        TEST_ASSERT(matches[1].check("a/c/1", { "a", "c" }, i2ptr(0x3)));
-        TEST_ASSERT(matches[2].check("a/d/6/1", { "a", "d", "6" }, i2ptr(0x101)));
+        TEST_ASSERT(matches[0].check("a/b/1", {{0, "a"}, {0, "b"}}, i2ptr(0x1)));
+        TEST_ASSERT(matches[1].check("a/c/1", {{0, "a"}, {0, "c"}}, i2ptr(0x3)));
+        TEST_ASSERT(matches[2].check("a/d/6/1", {{0, "a"}, {0, "d"}, {0, "6"}}, i2ptr(0x101)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/2", key_buf, &collector, Collector::trampoline));
         const auto& matches = collector.get_matches();
         TEST_ASSERT_EQUAL_size_t(3, matches.size());
-        TEST_ASSERT(matches[0].check("a/b/2", { "b" }, i2ptr(0x2)));
-        TEST_ASSERT(matches[1].check("a/c/2", { "c" }, i2ptr(0x4)));
-        TEST_ASSERT(matches[2].check("a/d/6/2", { "d", "6" }, i2ptr(0x102)));
+        TEST_ASSERT(matches[0].check("a/b/2", {{0, "b"}}, i2ptr(0x2)));
+        TEST_ASSERT(matches[1].check("a/c/2", {{0, "c"}}, i2ptr(0x4)));
+        TEST_ASSERT(matches[2].check("a/d/6/2", {{0, "d"}, {0, "6"}}, i2ptr(0x102)));
     }
 
     // Cleanup.
@@ -721,37 +734,45 @@ void test_match_2()
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/d", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(6, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d", { "b", "c" }, i2ptr(0xABCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/a/b/c/d", { "b", "c", "d", "a", "b", "c" }, i2ptr(0xABCDABCD)));
-        TEST_ASSERT(col.get_matches()[2].check("a/b/c/d/b/c/d", { "b", "c", "d", "b", "c" }, i2ptr(0xABCDBCD)));
-        TEST_ASSERT(col.get_matches()[3].check("a/b/d/b/c/d", { "b", "d", "b", "c" }, i2ptr(0xABDBCD)));
-        TEST_ASSERT(col.get_matches()[4].check("a/f/c/d/*/c/d", { "f", "c", "d", "*", "c" }, i2ptr(0xAFCD0CD)));
-        TEST_ASSERT(col.get_matches()[5].check("a/f/c/d/b/c/d", { "f", "c", "d", "b", "c" }, i2ptr(0xAFCDBCD)));
+        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d", {{0, "b"}, {0, "c"}}, i2ptr(0xABCD)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/c/d/a/b/c/d", {{0, "b"}, {0, "c"}, {0, "d"}, {0, "a"}, {0, "b"}, {0, "c"}}, i2ptr(0xABCDABCD)));
+        TEST_ASSERT(col.get_matches()[2].check(
+          "a/b/c/d/b/c/d", {{0, "b"}, {0, "c"}, {0, "d"}, {0, "b"}, {0, "c"}}, i2ptr(0xABCDBCD)));
+        TEST_ASSERT(
+          col.get_matches()[3].check("a/b/d/b/c/d", {{0, "b"}, {0, "d"}, {0, "b"}, {0, "c"}}, i2ptr(0xABDBCD)));
+        TEST_ASSERT(col.get_matches()[4].check(
+          "a/f/c/d/*/c/d", {{0, "f"}, {0, "c"}, {0, "d"}, {0, "*"}, {0, "c"}}, i2ptr(0xAFCD0CD)));
+        TEST_ASSERT(col.get_matches()[5].check(
+          "a/f/c/d/b/c/d", {{0, "f"}, {0, "c"}, {0, "d"}, {0, "b"}, {0, "c"}}, i2ptr(0xAFCDBCD)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/b/?/*/c/d", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d/a/b/c/d", { "c", "d", "a", "b" }, i2ptr(0xABCDABCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", { "c", "d", "b" }, i2ptr(0xABCDBCD)));
-        TEST_ASSERT(col.get_matches()[2].check("a/b/d/b/c/d", { "d", "b" }, i2ptr(0xABDBCD)));
+        TEST_ASSERT(
+          col.get_matches()[0].check("a/b/c/d/a/b/c/d", {{0, "c"}, {1, "d"}, {1, "a"}, {1, "b"}}, i2ptr(0xABCDABCD)));
+        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", {{0, "c"}, {1, "d"}, {1, "b"}}, i2ptr(0xABCDBCD)));
+        TEST_ASSERT(col.get_matches()[2].check("a/b/d/b/c/d", {{0, "d"}, {1, "b"}}, i2ptr(0xABDBCD)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/b/?/*/c/d", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d/a/b/c/d", { "c", "d", "a", "b" }, i2ptr(0xABCDABCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", { "c", "d", "b" }, i2ptr(0xABCDBCD)));
-        TEST_ASSERT(col.get_matches()[2].check("a/b/d/b/c/d", { "d", "b" }, i2ptr(0xABDBCD)));
+        TEST_ASSERT(
+          col.get_matches()[0].check("a/b/c/d/a/b/c/d", {{0, "c"}, {1, "d"}, {1, "a"}, {1, "b"}}, i2ptr(0xABCDABCD)));
+        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", {{0, "c"}, {1, "d"}, {1, "b"}}, i2ptr(0xABCDBCD)));
+        TEST_ASSERT(col.get_matches()[2].check("a/b/d/b/c/d", {{0, "d"}, {1, "b"}}, i2ptr(0xABDBCD)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/?/c/?/*/c/d", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(4, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d/a/b/c/d", { "b", "d", "a", "b" }, i2ptr(0xABCDABCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", { "b", "d", "b" }, i2ptr(0xABCDBCD)));
-        TEST_ASSERT(col.get_matches()[2].check("a/f/c/d/*/c/d", { "f", "d", "*" }, i2ptr(0xAFCD0CD)));
-        TEST_ASSERT(col.get_matches()[3].check("a/f/c/d/b/c/d", { "f", "d", "b" }, i2ptr(0xAFCDBCD)));
+        TEST_ASSERT(
+          col.get_matches()[0].check("a/b/c/d/a/b/c/d", {{0, "b"}, {1, "d"}, {2, "a"}, {2, "b"}}, i2ptr(0xABCDABCD)));
+        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/b/c/d", {{0, "b"}, {1, "d"}, {2, "b"}}, i2ptr(0xABCDBCD)));
+        TEST_ASSERT(col.get_matches()[2].check("a/f/c/d/*/c/d", {{0, "f"}, {1, "d"}, {2, "*"}}, i2ptr(0xAFCD0CD)));
+        TEST_ASSERT(col.get_matches()[3].check("a/f/c/d/b/c/d", {{0, "f"}, {1, "d"}, {2, "b"}}, i2ptr(0xAFCDBCD)));
     }
     {
         Collector col; // If more than one * is present, the non-first * is treated verbatim.
@@ -762,42 +783,52 @@ void test_match_2()
         Collector col; // If more than one * is present, the non-first * is treated verbatim.
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/*/c/d/*/c/d", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(1, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/f/c/d/*/c/d", { "a", "f" }, i2ptr(0xAFCD0CD)));
+        TEST_ASSERT(col.get_matches()[0].check("a/f/c/d/*/c/d", {{0, "a"}, {1, "f"}}, i2ptr(0xAFCD0CD)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
+        TEST_ASSERT(col.get_matches()[0].check(
+          "a/b/d/b/c/", {{0, "a"}, {0, "b"}, {0, "d"}, {0, "b"}, {0, "c"}}, i2ptr(0xABDBC0)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/d/b/c/d/", {{0, "a"}, {0, "b"}, {0, "d"}, {0, "b"}, {0, "c"}, {0, "d"}}, i2ptr(0xABDBCD0)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/*/", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
+        TEST_ASSERT(col.get_matches()[0].check(
+          "a/b/d/b/c/", {{0, "a"}, {1, "b"}, {1, "d"}, {1, "b"}, {1, "c"}}, i2ptr(0xABDBC0)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/d/b/c/d/", {{0, "a"}, {1, "b"}, {1, "d"}, {1, "b"}, {1, "c"}, {1, "d"}}, i2ptr(0xABDBCD0)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/?/", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
+        TEST_ASSERT(col.get_matches()[0].check(
+          "a/b/d/b/c/", {{0, "a"}, {0, "b"}, {0, "d"}, {0, "b"}, {1, "c"}}, i2ptr(0xABDBC0)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/d/b/c/d/", {{0, "a"}, {0, "b"}, {0, "d"}, {0, "b"}, {0, "c"}, {1, "d"}}, i2ptr(0xABDBCD0)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/*/?/", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
+        TEST_ASSERT(col.get_matches()[0].check(
+          "a/b/d/b/c/", {{0, "a"}, {1, "b"}, {1, "d"}, {1, "b"}, {2, "c"}}, i2ptr(0xABDBC0)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/d/b/c/d/", {{0, "a"}, {1, "b"}, {1, "d"}, {1, "b"}, {1, "c"}, {2, "d"}}, i2ptr(0xABDBCD0)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/?/*/?/", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/d/b/c/", { "a", "b", "d", "b", "c" }, i2ptr(0xABDBC0)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/d/b/c/d/", { "a", "b", "d", "b", "c", "d" }, i2ptr(0xABDBCD0)));
+        TEST_ASSERT(col.get_matches()[0].check(
+          "a/b/d/b/c/", {{0, "a"}, {1, "b"}, {2, "d"}, {2, "b"}, {3, "c"}}, i2ptr(0xABDBC0)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/d/b/c/d/", {{0, "a"}, {1, "b"}, {2, "d"}, {2, "b"}, {2, "c"}, {3, "d"}}, i2ptr(0xABDBCD0)));
     }
     {
         Collector col; // If more than one * is present, the non-first * is treated verbatim.
@@ -813,9 +844,11 @@ void test_match_2()
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/b/c/*", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d", { "a", "d" }, i2ptr(0xABCD)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/d/a/b/c/d", { "a", "d", "a", "b", "c", "d" }, i2ptr(0xABCDABCD)));
-        TEST_ASSERT(col.get_matches()[2].check("a/b/c/d/b/c/d", { "a", "d", "b", "c", "d" }, i2ptr(0xABCDBCD)));
+        TEST_ASSERT(col.get_matches()[0].check("a/b/c/d", {{0, "a"}, {1, "d"}}, i2ptr(0xABCD)));
+        TEST_ASSERT(col.get_matches()[1].check(
+          "a/b/c/d/a/b/c/d", {{0, "a"}, {1, "d"}, {1, "a"}, {1, "b"}, {1, "c"}, {1, "d"}}, i2ptr(0xABCDABCD)));
+        TEST_ASSERT(col.get_matches()[2].check(
+          "a/b/c/d/b/c/d", {{0, "a"}, {1, "d"}, {1, "b"}, {1, "c"}, {1, "d"}}, i2ptr(0xABCDBCD)));
     }
 
     // Cleanup.
@@ -848,30 +881,30 @@ void test_match_3()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
         TEST_ASSERT(col.get_matches()[0].check("", {}, i2ptr(0x01)));
-        TEST_ASSERT(col.get_matches()[1].check("/", { "" }, i2ptr(0x02)));
+        TEST_ASSERT(col.get_matches()[1].check("/", {{0, ""}}, i2ptr(0x02)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "/*", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(1, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("/", { "" }, i2ptr(0x02)));
+        TEST_ASSERT(col.get_matches()[0].check("/", {{0, ""}}, i2ptr(0x02)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "?/*/", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT(col.get_only().check("/", { "" }, i2ptr(0x02)));
+        TEST_ASSERT(col.get_only().check("/", {{0, ""}}, i2ptr(0x02)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*/?/", key_buf, &col, Collector::trampoline));
-        TEST_ASSERT(col.get_only().check("/", { "" }, i2ptr(0x02)));
+        TEST_ASSERT(col.get_only().check("/", {{1, ""}}, i2ptr(0x02)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "*", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("", { "" }, i2ptr(0x01)));
-        TEST_ASSERT(col.get_matches()[1].check("/", { "", "" }, i2ptr(0x02)));
+        TEST_ASSERT(col.get_matches()[0].check("", {{0, ""}}, i2ptr(0x01)));
+        TEST_ASSERT(col.get_matches()[1].check("/", {{0, ""}, {0, ""}}, i2ptr(0x02)));
     }
 
     // Cleanup.
@@ -897,15 +930,15 @@ void test_match_4()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/*/z", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, col.get_matches().size());
         TEST_ASSERT(col.get_matches()[0].check("a/z", {}, i2ptr(0x01)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/z", { "b" }, i2ptr(0x02)));
-        TEST_ASSERT(col.get_matches()[2].check("a/b/c/z", { "b", "c" }, i2ptr(0x03)));
+        TEST_ASSERT(col.get_matches()[1].check("a/b/z", {{0, "b"}}, i2ptr(0x02)));
+        TEST_ASSERT(col.get_matches()[2].check("a/b/c/z", {{0, "b"}, {0, "c"}}, i2ptr(0x03)));
     }
     {
         Collector col;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_match(&wkv, "a/?/*/z", key_buf, &col, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, col.get_matches().size());
-        TEST_ASSERT(col.get_matches()[0].check("a/b/z", { "b" }, i2ptr(0x02)));
-        TEST_ASSERT(col.get_matches()[1].check("a/b/c/z", { "b", "c" }, i2ptr(0x03)));
+        TEST_ASSERT(col.get_matches()[0].check("a/b/z", {{0, "b"}}, i2ptr(0x02)));
+        TEST_ASSERT(col.get_matches()[1].check("a/b/c/z", {{0, "b"}, {1, "c"}}, i2ptr(0x03)));
     }
 
     // Cleanup.
@@ -957,8 +990,8 @@ void test_route()
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("?/b/?", { "a", "c" }, i2ptr(0x05)));
-        TEST_ASSERT(collector.get_matches()[1].check("a/?/c", { "b" }, i2ptr(0x04)));
+        TEST_ASSERT(collector.get_matches()[0].check("?/b/?", {{0, "a"}, {1, "c"}}, i2ptr(0x05)));
+        TEST_ASSERT(collector.get_matches()[1].check("a/?/c", {{0, "b"}}, i2ptr(0x04)));
         TEST_ASSERT(collector.get_matches()[2].check("a/b/c", {}, i2ptr(0x03)));
     }
 
@@ -975,58 +1008,58 @@ void test_route()
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
         TEST_ASSERT(collector.get_matches()[0].check("*/", {}, i2ptr(0x08)));
-        TEST_ASSERT(collector.get_matches()[1].check("*", { "" }, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[1].check("*", {{0, ""}}, i2ptr(0x07)));
         TEST_ASSERT(collector.get_matches()[2].check("", {}, i2ptr(0x01)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "/", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("*/", { "" }, i2ptr(0x08)));
-        TEST_ASSERT(collector.get_matches()[1].check("*", { "", "" }, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[0].check("*/", {{0, ""}}, i2ptr(0x08)));
+        TEST_ASSERT(collector.get_matches()[1].check("*", {{0, ""}, {0, ""}}, i2ptr(0x07)));
         TEST_ASSERT(collector.get_matches()[2].check("/", {}, i2ptr(0x02)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("*", { "a", "b" }, i2ptr(0x07)));
-        TEST_ASSERT(collector.get_matches()[1].check("a/*", { "b" }, i2ptr(0x09)));
+        TEST_ASSERT(collector.get_matches()[0].check("*", {{0, "a"}, {0, "b"}}, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[1].check("a/*", {{0, "b"}}, i2ptr(0x09)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c/", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("*/c/?", { "a", "b", "" }, i2ptr(0x0A)));
-        TEST_ASSERT(collector.get_matches()[1].check("*/", { "a", "b", "c" }, i2ptr(0x08)));
-        TEST_ASSERT(collector.get_matches()[2].check("*", { "a", "b", "c", "" }, i2ptr(0x07)));
-        TEST_ASSERT(collector.get_matches()[3].check("a/*", { "b", "c", "" }, i2ptr(0x09)));
+        TEST_ASSERT(collector.get_matches()[0].check("*/c/?", {{0, "a"}, {0, "b"}, {1, ""}}, i2ptr(0x0A)));
+        TEST_ASSERT(collector.get_matches()[1].check("*/", {{0, "a"}, {0, "b"}, {0, "c"}}, i2ptr(0x08)));
+        TEST_ASSERT(collector.get_matches()[2].check("*", {{0, "a"}, {0, "b"}, {0, "c"}, {0, ""}}, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[3].check("a/*", {{0, "b"}, {0, "c"}, {0, ""}}, i2ptr(0x09)));
         TEST_ASSERT(collector.get_matches()[4].check("a/b/c/", {}, i2ptr(0x06)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/c", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(5, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("?/b/?", { "a", "c" }, i2ptr(0x05)));
-        TEST_ASSERT(collector.get_matches()[1].check("*", { "a", "b", "c" }, i2ptr(0x07)));
-        TEST_ASSERT(collector.get_matches()[2].check("a/?/c", { "b" }, i2ptr(0x04)));
-        TEST_ASSERT(collector.get_matches()[3].check("a/*", { "b", "c" }, i2ptr(0x09)));
+        TEST_ASSERT(collector.get_matches()[0].check("?/b/?", {{0, "a"}, {1, "c"}}, i2ptr(0x05)));
+        TEST_ASSERT(collector.get_matches()[1].check("*", {{0, "a"}, {0, "b"}, {0, "c"}}, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[2].check("a/?/c", {{0, "b"}}, i2ptr(0x04)));
+        TEST_ASSERT(collector.get_matches()[3].check("a/*", {{0, "b"}, {0, "c"}}, i2ptr(0x09)));
         TEST_ASSERT(collector.get_matches()[4].check("a/b/c", {}, i2ptr(0x03)));
     }
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "c/z", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("*/c/?", { "z" }, i2ptr(0x0A)));
-        TEST_ASSERT(collector.get_matches()[1].check("*", { "c", "z" }, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[0].check("*/c/?", {{1, "z"}}, i2ptr(0x0A)));
+        TEST_ASSERT(collector.get_matches()[1].check("*", {{0, "c"}, {0, "z"}}, i2ptr(0x07)));
     }
     {
         Collector collector; // The second * in "*/b/*" is treated verbatim.
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "z/b/*", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(3, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("?/b/?", { "z", "*" }, i2ptr(0x05)));
-        TEST_ASSERT(collector.get_matches()[1].check("*/b/*", { "z" }, i2ptr(0x0B)));
-        TEST_ASSERT(collector.get_matches()[2].check("*", { "z", "b", "*" }, i2ptr(0x07)));
+        TEST_ASSERT(collector.get_matches()[0].check("?/b/?", {{0, "z"}, {1, "*"}}, i2ptr(0x05)));
+        TEST_ASSERT(collector.get_matches()[1].check("*/b/*", {{0, "z"}}, i2ptr(0x0B)));
+        TEST_ASSERT(collector.get_matches()[2].check("*", {{0, "z"}, {0, "b"}, {0, "*"}}, i2ptr(0x07)));
     }
 
     // Cleanup.
@@ -1053,7 +1086,7 @@ void test_route_2()
     {
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/x", key_buf, &collector, Collector::trampoline));
-        TEST_ASSERT(collector.get_only().check("*/x", { "a" }, i2ptr(0x02)));
+        TEST_ASSERT(collector.get_only().check("*/x", {{0, "a"}}, i2ptr(0x02)));
     }
     // Cleanup.
     while (!wkv_is_empty(&wkv)) {
@@ -1085,8 +1118,8 @@ void test_route_3()
         Collector collector;
         TEST_ASSERT_EQUAL_PTR(nullptr, wkv_route(&wkv, "a/b/z", key_buf, &collector, Collector::trampoline));
         TEST_ASSERT_EQUAL_size_t(2, collector.get_matches().size());
-        TEST_ASSERT(collector.get_matches()[0].check("a/?/*/z", { "b" }, i2ptr(0x02)));
-        TEST_ASSERT(collector.get_matches()[1].check("a/*/z", { "b" }, i2ptr(0x01)));
+        TEST_ASSERT(collector.get_matches()[0].check("a/?/*/z", {{0, "b"}}, i2ptr(0x02)));
+        TEST_ASSERT(collector.get_matches()[1].check("a/*/z", {{0, "b"}}, i2ptr(0x01)));
     }
     // Cleanup.
     while (!wkv_is_empty(&wkv)) {

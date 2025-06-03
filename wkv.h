@@ -397,14 +397,14 @@ static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 /// valid key. NULL strings are treated as if they were valid empty strings.
 static inline struct wkv_str_t _wkv_key(const char* const str)
 {
-    const struct wkv_str_t out = { (str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN + 1) : 0, str };
+    const struct wkv_str_t out = {(str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN + 1) : 0, str};
     return out;
 }
 
 static inline struct wkv_str_t _wkv_edge_seg(const struct wkv_edge_t* const edge)
 {
     WKV_ASSERT(edge != NULL);
-    const struct wkv_str_t out = { edge->seg_len, edge->seg };
+    const struct wkv_str_t out = {edge->seg_len, edge->seg};
     return out;
 }
 
@@ -419,7 +419,7 @@ static inline struct _wkv_split_t _wkv_split(const struct wkv_str_t key, const c
 {
     const char* const   slash   = (key.str != NULL) ? (const char*)memchr(key.str, sep, key.len) : NULL;
     const size_t        seg_len = (slash != NULL) ? (size_t)(slash - key.str) : key.len;
-    struct _wkv_split_t out     = { { seg_len, key.str }, { 0, NULL }, slash == NULL };
+    struct _wkv_split_t out     = {{seg_len, key.str}, {0, NULL}, slash == NULL};
     if (slash != NULL) {
         out.tail.str = slash + 1;
         out.tail.len = key.len - seg_len - 1U;
@@ -657,7 +657,7 @@ static inline struct wkv_str_t _wkv_reconstruct(const struct wkv_node_t* const n
         }
     }
     WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strlen(p) == node->key_len));
-    const struct wkv_str_t out = { node->key_len, p };
+    const struct wkv_str_t out = {node->key_len, p};
     return out;
 }
 
@@ -720,16 +720,14 @@ struct _wkv_substitution_list_t
     struct wkv_substitution_t* tail;
 };
 
-#define _wkv_SUBSTITUTION_APPEND(old_list, new_list, str, ordinal)              \
-    WKV_ASSERT(ordinal >= 0);                                                   \
-    struct wkv_substitution_t new_list##_tail = { str, (size_t)ordinal, NULL }; \
-    if (old_list.tail != NULL) {                                                \
-        old_list.tail->next = &new_list##_tail;                                 \
-    }                                                                           \
-    const struct _wkv_substitution_list_t new_list = {                          \
-        (old_list.head == NULL) ? &new_list##_tail : old_list.head,             \
-        &new_list##_tail,                                                       \
-    };                                                                          \
+#define _wkv_SUBSTITUTION_APPEND(old_list, new_list, str, ordinal)                                                \
+    WKV_ASSERT(ordinal >= 0);                                                                                     \
+    struct wkv_substitution_t new_list##_tail = {str, (size_t)ordinal, NULL};                                     \
+    if (old_list.tail != NULL) {                                                                                  \
+        old_list.tail->next = &new_list##_tail;                                                                   \
+    }                                                                                                             \
+    const struct _wkv_substitution_list_t new_list = {(old_list.head == NULL) ? &new_list##_tail : old_list.head, \
+                                                      &new_list##_tail};                                          \
     (void)0
 
 // MATCH
@@ -884,14 +882,14 @@ static inline void* _wkv_route(const struct _wkv_hit_ctx_t* const    ctx,
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     void* result = NULL;
     {
-        const struct wkv_str_t sub_one = { 1, &ctx->self->sub_one };
+        const struct wkv_str_t sub_one = {1, &ctx->self->sub_one};
         const ptrdiff_t        k       = _wkv_bisect(node, sub_one);
         if (k >= 0) {
             result = _wkv_route_sub_one(ctx, node->edges[k], qs, sub_ord + 1, subs, any_seen);
         }
     }
     if ((result == NULL) && (!any_seen)) {
-        const struct wkv_str_t sub_any = { 1, &ctx->self->sub_any };
+        const struct wkv_str_t sub_any = {1, &ctx->self->sub_any};
         const ptrdiff_t        k       = _wkv_bisect(node, sub_any);
         if (k >= 0) {
             result = _wkv_route_sub_any(ctx, node->edges[k], qs, sub_ord + 1, subs);
@@ -927,7 +925,7 @@ static inline void* _wkv_hit_cb_adapter(const struct _wkv_hit_ctx_t* const     b
 {
     WKV_ASSERT(node->value != NULL);
     const struct _wkv_hit_cb_adapter_ctx_t* const ctx = (const struct _wkv_hit_cb_adapter_ctx_t*)base;
-    struct wkv_hit_t                              hit = { { 0, NULL }, sub_head, node->value };
+    struct wkv_hit_t                              hit = {{0, NULL}, sub_head, node->value};
     if (ctx->reconstruction_buffer != NULL) {
         hit.key = _wkv_reconstruct(node, base->self->sep, ctx->reconstruction_buffer);
     }
@@ -941,10 +939,9 @@ static inline void* wkv_match(struct wkv_t* const  self,
                               const wkv_callback_t callback)
 {
     const struct _wkv_hit_cb_adapter_ctx_t ctx = {
-        { self, _wkv_hit_cb_adapter }, reconstruction_buffer, context, callback
-    };
+      {self, _wkv_hit_cb_adapter}, reconstruction_buffer, context, callback};
     const struct wkv_str_t                q    = _wkv_key(query);
-    const struct _wkv_substitution_list_t subs = { NULL, NULL };
+    const struct _wkv_substitution_list_t subs = {NULL, NULL};
     return _wkv_match(&ctx.base, &self->root, _wkv_split(q, self->sep), -1, subs, false);
 }
 
@@ -955,10 +952,9 @@ static inline void* wkv_route(struct wkv_t* const  self,
                               const wkv_callback_t callback)
 {
     const struct _wkv_hit_cb_adapter_ctx_t ctx = {
-        { self, _wkv_hit_cb_adapter }, reconstruction_buffer, context, callback
-    };
+      {self, _wkv_hit_cb_adapter}, reconstruction_buffer, context, callback};
     const struct wkv_str_t                q    = _wkv_key(query);
-    const struct _wkv_substitution_list_t subs = { NULL, NULL };
+    const struct _wkv_substitution_list_t subs = {NULL, NULL};
     return _wkv_route(&ctx.base, &self->root, _wkv_split(q, self->sep), -1, subs, false);
 }
 

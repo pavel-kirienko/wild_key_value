@@ -15,3 +15,4 @@ AlignConsecutiveShortCaseStatements: { Enabled: true }
 AlignEscapedNewlines: LeftWithLastLine
 AlignTrailingComments: true
 SortIncludes: false
+Cpp11BracedListStyle: true

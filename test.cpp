@@ -89,9 +89,11 @@ public:
         std::vector<std::pair<std::size_t, std::string>> substitutions;
         void*                                            value = nullptr;
 
-        explicit Hit(const ::wkv_hit_t& hit) : key(view(hit.key)), value(hit.value)
+        explicit Hit(::wkv_node_t* const node, const std::string_view key, const ::wkv_substitution_t* const subs)
+          : key(key)
+          , value(node->value)
         {
-            const ::wkv_substitution_t* s = hit.substitutions;
+            const ::wkv_substitution_t* s = subs;
             while (s != nullptr) {
                 substitutions.emplace_back(s->ordinal, view(s->str));
                 s = s->next;
@@ -140,9 +142,12 @@ public:
         return matches_.front();
     }
 
-    [[nodiscard]] static void* trampoline(::wkv_t* const self, void* const context, const ::wkv_hit_t hit)
+    [[nodiscard]] static void* trampoline(::wkv_t* const                    self,
+                                          void* const                       context,
+                                          ::wkv_node_t* const               node,
+                                          const ::wkv_substitution_t* const substitutions)
     {
-        return static_cast<Collector*>(context)->on_hit(self, hit);
+        return static_cast<Collector*>(context)->on_hit(self, node, substitutions);
     }
 
     [[maybe_unused]] void print() const
@@ -155,9 +160,13 @@ public:
     }
 
 private:
-    [[nodiscard]] void* on_hit(::wkv_t*, const ::wkv_hit_t hit)
+    [[nodiscard]] void* on_hit(::wkv_t* const                    self,
+                               ::wkv_node_t* const               node,
+                               const ::wkv_substitution_t* const substitutions)
     {
-        matches_.emplace_back(hit);
+        std::array<char, WKV_KEY_MAX_LEN + 1> key_buf;
+        wkv_reconstruct(self, node, key_buf.data());
+        matches_.emplace_back(node, std::string_view(key_buf.data(), node->key_len), substitutions);
         return nullptr;
     }
 

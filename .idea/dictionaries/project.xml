@@ -3,6 +3,7 @@
     <words>
       <w>kirienko</w>
       <w>memchr</w>
+      <w>memcpy</w>
       <w>nolintbegin</w>
       <w>nolintend</w>
       <w>segbuf</w>

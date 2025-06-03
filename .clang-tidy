@@ -49,6 +49,8 @@ Checks: >-
   -*-owning-memory,
   -*clang-analyzer*,
   -*named-parameter,
+  -*-avoid-const-or-ref-data-members,
+  -*-unchecked-optional-access,
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*\.hpp'
 FormatStyle: file

@@ -140,16 +140,16 @@ extern "C"
 
 struct wkv_t;
 
-/// Internally, Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
-/// User-supplied keys are converted to this format early.
+/// Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
 struct wkv_str_t
 {
     size_t      len; ///< Length of the string, excluding the trailing NUL.
-    const char* str; ///< NUL-terminated string of length 'len'.
+    const char* str; ///< This string may not be NUL-terminated.
 };
 
 /// A fundamental invariant of WKV is that every node has a value and/or outgoing edges. Nodes with neither are removed.
 /// Setting the value to NULL manually may cause the node to be garbage collected at any time, so it must be avoided.
+/// The user code MUST NOT change anything except the value pointer.
 struct wkv_node_t
 {
     struct wkv_node_t* parent; ///< NULL if this is the root node.
@@ -164,6 +164,7 @@ struct wkv_node_t
     void*  value; ///< NULL if this is not a full key.
 };
 
+/// The user code MUST NOT change anything here.
 struct wkv_edge_t
 {
     struct wkv_node_t node; ///< Base type.
@@ -219,6 +220,7 @@ struct wkv_t
 /// Once created, the instance must not be moved, unless empty.
 static inline void wkv_init(struct wkv_t* const self, const wkv_realloc_t realloc)
 {
+    WKV_ASSERT((self != NULL) && (realloc != NULL));
     memset(self, 0, sizeof(struct wkv_t));
     self->root.parent = NULL;
     self->root.edges  = NULL;
@@ -232,7 +234,7 @@ static inline void wkv_init(struct wkv_t* const self, const wkv_realloc_t reallo
 
 static inline bool wkv_is_empty(const struct wkv_t* const self)
 {
-    WKV_ASSERT((self != NULL) && (self->root.value == NULL));
+    WKV_ASSERT(self != NULL);
     return self->root.n_edges == 0;
 }
 
@@ -241,32 +243,41 @@ static inline bool wkv_is_empty(const struct wkv_t* const self)
 /// This function is needed because WKV deduplicates common prefixes of keys, so full keys are not stored anywhere.
 /// This function will rebuild the full key for this node on-demand; the complexity is linear in the key length
 /// (sic! this is not much slower than bare memcpy!).
-/// Does nothing if any of the pointers are NULL.
 static inline void wkv_get_key(const struct wkv_t* const self, const struct wkv_node_t* const node, char* const buf)
 {
-    if ((self != NULL) && (node != NULL) && (buf != NULL)) {
-        WKV_ASSERT(node->key_len <= WKV_KEY_MAX_LEN);
-        char* p = &buf[node->key_len];
-        *p      = '\0';
-        {
-            const struct wkv_node_t* n = node;
-            while (n->parent != NULL) {
-                WKV_ASSERT(n->parent->n_edges > 0);
-                const struct wkv_edge_t* const edge = (const struct wkv_edge_t*)n;
-                WKV_ASSERT(edge->seg_len <= node->key_len);
-                p -= edge->seg_len;
-                WKV_ASSERT(p >= buf);
-                memcpy(p, edge->seg, edge->seg_len);
-                n = n->parent;
-                if (n->parent != NULL) {
-                    *--p = self->sep;
-                }
-            }
+    WKV_ASSERT((self != NULL) && (node != NULL) && (buf != NULL));
+    WKV_ASSERT(node->key_len <= WKV_KEY_MAX_LEN);
+    char* p                    = &buf[node->key_len];
+    *p                         = '\0';
+    const struct wkv_node_t* n = node;
+    while (n->parent != NULL) {
+        WKV_ASSERT(n->parent->n_edges > 0);
+        const struct wkv_edge_t* const edge = (const struct wkv_edge_t*)n;
+        WKV_ASSERT(edge->seg_len <= node->key_len);
+        p -= edge->seg_len;
+        WKV_ASSERT(p >= buf);
+        memcpy(p, edge->seg, edge->seg_len);
+        n = n->parent;
+        if (n->parent != NULL) {
+            *--p = self->sep;
         }
-        WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strlen(p) == node->key_len));
     }
+    WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strlen(p) == node->key_len));
 }
 
+/// Internally, WKV uses strings with explicit length for performance and safety reasons.
+/// This helper converts a C string into a borrowed view wkv_str_t.
+/// The maximum length is limited to a value strictly greater than WKV_KEY_MAX_LEN to allow detection of overly long
+/// keys; this is important because we cannot simply implicitly truncate keys, as that may result in conflicts if
+/// the truncated keys happens to share a prefix with a valid key.
+/// NULL strings are treated as empty strings.
+static inline struct wkv_str_t wkv_key(const char* const str)
+{
+    // We use a much larger limit in case there are multi-character substitution tokens in the future,
+    // as that may cause valid queries to exceed WKV_KEY_MAX_LEN.
+    const struct wkv_str_t out = {(str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN * 2) : 0, str};
+    return out;
+}
 // --------------------------------------    BASIC OPERATIONS ON VERBATIM KEYS    --------------------------------------
 
 /// Creates a new entry and returns its node pointer. If such key already exists, then the existing node is returned.
@@ -279,15 +290,15 @@ static inline void wkv_get_key(const struct wkv_t* const self, const struct wkv_
 ///
 /// The key is treated verbatim (no pattern matching).
 /// Complexity is logarithmic in the number of keys in the container.
-static inline struct wkv_node_t* wkv_new(struct wkv_t* const self, const char* const key);
+static inline struct wkv_node_t* wkv_new(struct wkv_t* const self, const struct wkv_str_t key);
 
 /// This is like wkv_new() except that it doesn't attempt to create a new node if the key does not exist,
 /// returning NULL instead.
 /// The key is treated verbatim (no pattern matching).
 /// Complexity is logarithmic in the number of keys in the container.
-static inline struct wkv_node_t* wkv_get(const struct wkv_t* const self, const char* const key);
+static inline struct wkv_node_t* wkv_get(const struct wkv_t* const self, const struct wkv_str_t key);
 
-/// Deletes a known valid node. Does nothing if self or the node are NULL.
+/// Deletes a known valid node. Does nothing if the node is NULL.
 /// Behavior undefined if the node does not belong to the container.
 /// Complexity is logarithmic in the number of keys in the container.
 static inline void wkv_del(struct wkv_t* const self, struct wkv_node_t* const node);
@@ -355,8 +366,7 @@ struct wkv_substitution_t
 };
 
 /// Invoked on every positive result while searching. The value of the node is guaranteed to be non-NULL.
-/// To read or write the value, use node->value.
-/// To access the key, use wkv_get_key() with this node.
+/// To read or write the value, use node->value. To access the key, use wkv_get_key() with this node.
 ///
 /// The substitutions indicate which segments of the key matched corresponding substitution tokens in the pattern.
 /// NULL substitutions indicate that the substitution list is empty.
@@ -376,18 +386,18 @@ typedef void* (*wkv_callback_t)(struct wkv_t*                    self,
 ///
 /// The general computational complexity approaches linear. However, if no substitutions are present in the
 /// query, then the complexity equals that of an ordinary key lookup (logarithmic).
-static inline void* wkv_match(struct wkv_t* const  self,
-                              const char* const    query,
-                              void* const          context,
-                              const wkv_callback_t callback);
+static inline void* wkv_match(struct wkv_t* const    self,
+                              const struct wkv_str_t query,
+                              void* const            context,
+                              const wkv_callback_t   callback);
 
 /// While wkv_match() searches for keys in a tree that match the pattern,
 /// the route function does the opposite: it searches for patterns in a tree that match the key.
 /// Patterns that match (which are actually keys of the tree) are reported via the callback as usual.
-static inline void* wkv_route(struct wkv_t* const  self,
-                              const char* const    query,
-                              void* const          context,
-                              const wkv_callback_t callback);
+static inline void* wkv_route(struct wkv_t* const    self,
+                              const struct wkv_str_t query,
+                              void* const            context,
+                              const wkv_callback_t   callback);
 
 // ====================================================================================================================
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
@@ -397,23 +407,13 @@ static inline void* wkv_route(struct wkv_t* const  self,
 
 static inline void _wkv_free(struct wkv_t* const self, void* const ptr)
 {
-    WKV_ASSERT(self != NULL);
     if (ptr != NULL) {
         (void)self->realloc(self, ptr, 0);
     }
 }
 
-/// Use max+1 as max length to avoid truncating long keys, as that may cause an invalid key to match an existing
-/// valid key. NULL strings are treated as if they were valid empty strings.
-static inline struct wkv_str_t _wkv_key(const char* const str)
-{
-    const struct wkv_str_t out = {(str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN + 1) : 0, str};
-    return out;
-}
-
 static inline struct wkv_str_t _wkv_edge_seg(const struct wkv_edge_t* const edge)
 {
-    WKV_ASSERT(edge != NULL);
     const struct wkv_str_t out = {edge->seg_len, edge->seg};
     return out;
 }
@@ -501,7 +501,6 @@ static ptrdiff_t _wkv_locate_in_parent(struct wkv_node_t* const node)
 /// Infallible because we require that realloc always succeeds when the size is non-increased.
 static inline void _wkv_shrink(struct wkv_t* const self, struct wkv_node_t* const node)
 {
-    WKV_ASSERT((self != NULL) && (node != NULL));
     if (node->edges != NULL) {
         node->edges = (struct wkv_edge_t**)self->realloc(self, node->edges, node->n_edges * sizeof(struct wkv_edge_t*));
         WKV_ASSERT((node->edges != NULL) || (node->n_edges == 0));
@@ -512,7 +511,6 @@ static inline void _wkv_shrink(struct wkv_t* const self, struct wkv_node_t* cons
 /// This is intended for aborting insertions when we run out of memory and have to backtrack.
 static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t* const node)
 {
-    WKV_ASSERT((self != NULL) && (node != NULL));
     _wkv_shrink(self, node);
     if ((node->n_edges == 0) && (node->value == NULL)) {
         const ptrdiff_t k = _wkv_locate_in_parent(node);
@@ -574,6 +572,7 @@ static inline struct wkv_node_t* _wkv_find_or_insert(struct wkv_t* const self, c
     return n;
 }
 
+/// Will return empty nodes as well! Not suitable for direct API exposure.
 static inline struct wkv_node_t* _wkv_get(const struct wkv_t* const      self,
                                           const struct wkv_node_t* const node,
                                           const struct wkv_str_t         key)
@@ -606,30 +605,32 @@ static inline struct wkv_node_t* _wkv_at(struct wkv_node_t* const node, size_t* 
     return NULL;
 }
 
-static inline struct wkv_node_t* wkv_new(struct wkv_t* const self, const char* const key)
+static inline struct wkv_node_t* wkv_new(struct wkv_t* const self, const struct wkv_str_t key)
 {
-    const struct wkv_str_t   k    = _wkv_key(key);
-    struct wkv_node_t* const node = _wkv_find_or_insert(self, k);
+    WKV_ASSERT(self != NULL);
+    struct wkv_node_t* const node = _wkv_find_or_insert(self, key);
     if (node != NULL) {
         if (node->value == NULL) {
-            node->key_len = k.len;
+            node->key_len = key.len;
         }
-        WKV_ASSERT(node->key_len == k.len);
+        WKV_ASSERT(node->key_len == key.len);
     }
     return node;
 }
 
-static inline struct wkv_node_t* wkv_get(const struct wkv_t* const self, const char* const key)
+static inline struct wkv_node_t* wkv_get(const struct wkv_t* const self, const struct wkv_str_t key)
 {
-    const struct wkv_str_t   k    = _wkv_key(key);
-    struct wkv_node_t* const node = _wkv_get(self, &self->root, k);
-    WKV_ASSERT((node == NULL) || (node->value == NULL) || (node->key_len == k.len));
-    return node;
+    WKV_ASSERT(self != NULL);
+    struct wkv_node_t* const node = _wkv_get(self, &self->root, key);
+    WKV_ASSERT((node == NULL) || (node->value == NULL) || (node->key_len == key.len));
+    // Do not return valueless nodes! The user must create those explicitly first.
+    return ((node == NULL) || (node->value == NULL)) ? NULL : node;
 }
 
 static inline void wkv_del(struct wkv_t* const self, struct wkv_node_t* const node)
 {
-    if ((self != NULL) && (node != NULL) && (node->parent != NULL)) {
+    WKV_ASSERT(self != NULL);
+    if ((node != NULL) && (node->parent != NULL)) {
         node->value = NULL;
         _wkv_prune_branch(self, node);
     }
@@ -637,10 +638,8 @@ static inline void wkv_del(struct wkv_t* const self, struct wkv_node_t* const no
 
 static inline struct wkv_node_t* wkv_at(struct wkv_t* const self, size_t index)
 {
-    if (self != NULL) {
-        return _wkv_at(&self->root, &index);
-    }
-    return NULL;
+    WKV_ASSERT(self != NULL);
+    return _wkv_at(&self->root, &index);
 }
 
 // ---------------------------------    FAST PATTERN MATCHING / KEY ROUTING ENGINE     ---------------------------------
@@ -855,24 +854,24 @@ static inline void* _wkv_route(const struct _wkv_hit_ctx_t* const    ctx,
 
 // ----------------------------------------        wkv_match / wkv_route        ----------------------------------------
 
-static inline void* wkv_match(struct wkv_t* const  self,
-                              const char* const    query,
-                              void* const          context,
-                              const wkv_callback_t callback)
+static inline void* wkv_match(struct wkv_t* const    self,
+                              const struct wkv_str_t query,
+                              void* const            context,
+                              const wkv_callback_t   callback)
 {
     const struct _wkv_hit_ctx_t           ctx  = {self, context, callback};
     const struct _wkv_substitution_list_t subs = {NULL, NULL};
-    return _wkv_match(&ctx, &self->root, _wkv_split(_wkv_key(query), self->sep), -1, subs, false);
+    return _wkv_match(&ctx, &self->root, _wkv_split(query, self->sep), -1, subs, false);
 }
 
-static inline void* wkv_route(struct wkv_t* const  self,
-                              const char* const    query,
-                              void* const          context,
-                              const wkv_callback_t callback)
+static inline void* wkv_route(struct wkv_t* const    self,
+                              const struct wkv_str_t query,
+                              void* const            context,
+                              const wkv_callback_t   callback)
 {
     const struct _wkv_hit_ctx_t           ctx  = {self, context, callback};
     const struct _wkv_substitution_list_t subs = {NULL, NULL};
-    return _wkv_route(&ctx, &self->root, _wkv_split(_wkv_key(query), self->sep), -1, subs, false);
+    return _wkv_route(&ctx, &self->root, _wkv_split(query, self->sep), -1, subs, false);
 }
 
 #ifdef __cplusplus

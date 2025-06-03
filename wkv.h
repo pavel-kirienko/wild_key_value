@@ -241,9 +241,9 @@ static inline struct wkv_str_t wkv_key(const char* const str)
 ///
 /// The key is treated verbatim (no pattern matching).
 /// Complexity is logarithmic in the number of keys in the container.
-static inline struct wkv_node_t* wkv_new(struct wkv_t* const self, const struct wkv_str_t key);
+static inline struct wkv_node_t* wkv_set(struct wkv_t* const self, const struct wkv_str_t key);
 
-/// This is like wkv_new() except that it doesn't attempt to create a new node if the key does not exist,
+/// This is like wkv_set() except that it doesn't attempt to create a new node if the key does not exist,
 /// returning NULL instead.
 /// The key is treated verbatim (no pattern matching).
 /// Complexity is logarithmic in the number of keys in the container.
@@ -556,7 +556,7 @@ static inline struct wkv_node_t* _wkv_at(struct wkv_node_t* const node, size_t* 
     return NULL;
 }
 
-static inline struct wkv_node_t* wkv_new(struct wkv_t* const self, const struct wkv_str_t key)
+static inline struct wkv_node_t* wkv_set(struct wkv_t* const self, const struct wkv_str_t key)
 {
     WKV_ASSERT(self != NULL);
     struct wkv_node_t* const node = _wkv_find_or_insert(self, key);

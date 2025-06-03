@@ -264,7 +264,7 @@ public:
             if (value == nullptr) {
                 throw std::range_error("Cannot assign nullptr");
             }
-            ::wkv_node_t* const node = ::wkv_new(owner_, wkv_key(key_));
+            ::wkv_node_t* const node = ::wkv_set(owner_, wkv_key(key_));
             if (node == nullptr) {
                 throw std::bad_alloc();
             }
@@ -274,7 +274,7 @@ public:
 
         [[nodiscard]] bool add(const char* const value) && noexcept
         {
-            ::wkv_node_t* const node = ::wkv_new(owner_, wkv_key(key_));
+            ::wkv_node_t* const node = ::wkv_set(owner_, wkv_key(key_));
             if (node != nullptr) {
                 node->value = const_cast<char*>(value); // NOLINT(*-const-cast)
                 return true;
@@ -460,7 +460,7 @@ void test_backtrack()
     {
         Memory mem(0);
         WildKV kv(mem);
-        TEST_ASSERT_NULL(wkv_new(&kv, wkv_key("a")));
+        TEST_ASSERT_NULL(wkv_set(&kv, wkv_key("a")));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&kv));
@@ -469,7 +469,7 @@ void test_backtrack()
     {
         Memory mem(1);
         WildKV kv(mem);
-        TEST_ASSERT_NULL(wkv_new(&kv, wkv_key("a")));
+        TEST_ASSERT_NULL(wkv_set(&kv, wkv_key("a")));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(1, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&kv));
@@ -478,7 +478,7 @@ void test_backtrack()
     {
         Memory mem(1);
         WildKV kv(mem);
-        TEST_ASSERT_NULL(wkv_new(&kv, wkv_key("a/b")));
+        TEST_ASSERT_NULL(wkv_set(&kv, wkv_key("a/b")));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(1, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&kv));
@@ -487,7 +487,7 @@ void test_backtrack()
     {
         Memory mem(2);
         WildKV kv(mem);
-        TEST_ASSERT_NULL(wkv_new(&kv, wkv_key("a/b")));
+        TEST_ASSERT_NULL(wkv_set(&kv, wkv_key("a/b")));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(2, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&kv));
@@ -497,7 +497,7 @@ void test_backtrack()
     {
         Memory mem(3);
         WildKV kv(mem);
-        TEST_ASSERT_NULL(wkv_new(&kv, wkv_key("a/b")));
+        TEST_ASSERT_NULL(wkv_set(&kv, wkv_key("a/b")));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
         TEST_ASSERT_EQUAL_size_t(3, mem.get_fragments_peak());
         TEST_ASSERT(wkv_is_empty(&kv));

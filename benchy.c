@@ -25,7 +25,7 @@ static void* std_realloc(struct wkv_t* const self, void* const ptr, const size_t
     return NULL;
 }
 
-static char* make_random_key(const size_t idx, const size_t n_segments)
+static struct wkv_str_t make_random_key(const size_t idx, const size_t n_segments)
 {
     char* const key = malloc(WKV_KEY_MAX_LEN + 1U);
     if (!key) {
@@ -44,7 +44,7 @@ static char* make_random_key(const size_t idx, const size_t n_segments)
         *p++            = '/';
     }
     sprintf(p, "%zu", idx); // Append the index to ensure uniqueness
-    return key;
+    return wkv_key(key);
 }
 
 static double now(void)
@@ -80,11 +80,12 @@ int main(int argc, char* argv[])
     // 1. Prepare dataset and container
     // ------------------------------------------------------------------
     fprintf(stderr, "Preparing the test with %lu keys...\n", key_count);
-    char* keys[key_count];
+    struct wkv_str_t keys[key_count];
     for (size_t i = 0; i < key_count; ++i) {
         keys[i] = make_random_key(i, (size_t)round(log10(key_count)));
     }
-    struct wkv_t kv = wkv_init(std_realloc);
+    struct wkv_t kv;
+    wkv_init(&kv, std_realloc);
 
     // ------------------------------------------------------------------
     // 2. Benchmark create (first insertion)
@@ -92,11 +93,7 @@ int main(int argc, char* argv[])
     fprintf(stderr, "Creating items...\n");
     double t0 = now();
     for (size_t i = 0; i < key_count; ++i) {
-        void* const v = (void*)(uintptr_t)(i + key_count * 1); // dummy unique value
-        if (wkv_add(&kv, keys[i], v) == NULL) {
-            fprintf(stderr, "Create failed at %zu\n", i);
-            return EXIT_FAILURE;
-        }
+        wkv_set(&kv, keys[i])->value = (void*)(uintptr_t)(i + key_count * 1); // dummy unique value
     }
     const double t_create = now() - t0;
 
@@ -107,11 +104,7 @@ int main(int argc, char* argv[])
     t0 = now();
     for (size_t z = 0; z < ITERS; ++z) {
         for (size_t i = 0; i < key_count; ++i) {
-            void* v = (void*)(uintptr_t)(i + key_count * 2); // new dummy value
-            if (wkv_set(&kv, keys[i], v) == NULL) {
-                fprintf(stderr, "Modify failed at %zu\n", i);
-                return EXIT_FAILURE;
-            }
+            wkv_set(&kv, keys[i])->value = (void*)(uintptr_t)(i + key_count * 2); // new dummy value
         }
     }
     const double t_modify = now() - t0;
@@ -139,17 +132,14 @@ int main(int argc, char* argv[])
     fprintf(stderr, "Deleting items...\n");
     t0 = now();
     for (size_t i = 0; i < key_count; ++i) {
-        if (wkv_set(&kv, keys[i], NULL) == NULL) {
-            fprintf(stderr, "Delete failed at %zu\n", i);
-            return EXIT_FAILURE;
-        }
+        wkv_del(&kv, wkv_get(&kv, keys[i]));
     }
     const double t_del_existing = now() - t0;
 
     t0 = now();
     for (size_t z = 0; z < ITERS; ++z) {
         for (size_t i = 0; i < key_count; ++i) {
-            (void)wkv_set(&kv, keys[i], NULL);
+            wkv_del(&kv, wkv_get(&kv, keys[i]));
         }
     }
     const double t_del_nonexist = now() - t0;
@@ -170,19 +160,10 @@ int main(int argc, char* argv[])
     // 7. Clean-up
     // ------------------------------------------------------------------
     while (!wkv_is_empty(&kv)) {
-        char        buf[WKV_KEY_MAX_LEN + 1];
-        void* const v = wkv_at(&kv, 0, buf, NULL);
-        if (v == NULL) {
-            fprintf(stderr, "Failed to retrieve key for deletion\n");
-            return EXIT_FAILURE;
-        }
-        if (wkv_set(&kv, buf, NULL) == NULL) {
-            fprintf(stderr, "Failed to delete key '%s'\n", buf);
-            return EXIT_FAILURE;
-        }
+        wkv_del(&kv, wkv_at(&kv, 0));
     }
     for (size_t i = 0; i < key_count; ++i) {
-        free(keys[i]);
+        free((void*)keys[i].str);
     }
     return 0;
 }

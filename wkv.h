@@ -11,56 +11,6 @@
 /// The recommended memory manager is O1Heap, which offers constant allocation time and low worst-case fragmentation,
 /// but it works with any other heap (incl. the standard heap) as well.
 ///
-/// Usage:
-///
-///     #include <wkv.h>
-///
-///     wkv_t kv = wkv_init(realloc_function);
-///
-///     // Create some keys:
-///     void* val = wkv_set(&kv, "foo/bar", my_bar);
-///     if (val == nullptr) { /* OOM or key too long */ }
-///     val = wkv_set(&kv, "foo/baz", my_baz);
-///     if (val == nullptr) { ... }
-///     assert(wkv_get(&kv, "foo/bar") == my_bar);  // Yup, the key is there.
-///     // Note: '/' is the default key segment separator, but it can be changed at runtime.
-///
-///     // Existing keys can be overwritten:
-///     void* val = wkv_set(&kv, "foo/bar", my_zoo);
-///     if (val == nullptr) { /* Key did not exist and insertion caused OOM, or key too long */ }
-///     assert(wkv_get(&kv, "foo/bar") == my_zoo);  // Yup, the key was overwritten.
-///
-///     // Access keys by index in an unspecified order:
-///     char key_buf[WKV_KEY_MAX_LEN + 1];
-///     size_t key_len = sizeof(key_buf);
-///     void* val = wkv_at(&kv, 0, key_buf, &key_len);
-///     if (val == nullptr) { /* Index out of range. */ }
-///     else {
-///         // Key is in key_buf, key length in key_len, and its value is in val.
-///         printf("key: '%s', value: %p\n", key_buf, val);
-///     }
-///
-///     // To erase a key, set its value to NULL:
-///     void* val = wkv_set(&kv, "foo/bar", nullptr);
-///     if (val == nullptr) { /* Key did not exist */ }
-///     else {
-///         // Key existed and was erased; its old value is returned.
-///         // This is a valid usage pattern, too: free(wkv_set(&kv, "foo/bar", nullptr));
-///     }
-///
-///     // Important: an empty key segment is also a valid key segment. This simple rule implies that:
-///     // - Repeated separators are not coalesced but treated verbatim -- distinct strings are distinct keys, always.
-///     // - An empty string is also a valid key.
-///     // Normalization is out of the scope of this library.
-///     // All statements below are valid and create distinct keys:
-///     wkv_set(&kv, "a/b",  my_value);
-///     wkv_set(&kv, "a//b", my_value);
-///     wkv_set(&kv, "/a/b", my_value);
-///     wkv_set(&kv, "a/b/", my_value);
-///     wkv_set(&kv, "/",    my_value);
-///     wkv_set(&kv, "//",   my_value);
-///     wkv_set(&kv, "",     my_value);
-///
 /// Example realloc_function using the standard heap (for o1heap it would look similar):
 ///
 ///     static void* realloc_function(struct wkv_t* const self, void* const ptr, const size_t new_size)
@@ -232,6 +182,7 @@ static inline void wkv_init(struct wkv_t* const self, const wkv_realloc_t reallo
     self->context     = NULL;
 }
 
+/// True if the container has no keys.
 static inline bool wkv_is_empty(const struct wkv_t* const self)
 {
     WKV_ASSERT(self != NULL);

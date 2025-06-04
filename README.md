@@ -1,15 +1,13 @@
 # Wild Key-Value
 
-Wild Key-Value is a fast and simple single-header key-value container with wildcards for embedded systems.
+[![Main Workflow](https://github.com/pavel-kirienko/wild_key_value/actions/workflows/main.yml/badge.svg)](https://github.com/pavel-kirienko/wild_key_value/actions/workflows/main.yml)
+
+Fast and simple single-header key-value container with pattern matching for embedded systems.
 Keys are strings, and values are void pointers.
 Keys are stored in the heap in fragments; common prefixes are deduplicated so the memory usage is extremely low.
-Conventional wildcard expressions can be used to look up keys in the container that match a given pattern,
-and also to look up patterns that match a given key; the latter is called "routing".
 
-Performs best when:
-
-- The key space is not altered often.
-- Keys are composed of short segments separated by a user-defined segment separator character, which is normally `/`.
+Patterns can be used to look up keys in the container, and also to look up patterns that match a given key;
+the latter is called "routing".
 
 
 ## Usage

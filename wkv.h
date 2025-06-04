@@ -83,7 +83,7 @@ struct wkv_t;
 struct wkv_str_t
 {
     size_t      len; ///< Length of the string, excluding the trailing NUL.
-    const char* str; ///< This string may not be NUL-terminated.
+    const char* str; ///< This string may not be NUL-terminated!
 };
 
 /// A fundamental invariant of WKV is that every node has a value and/or outgoing edges. Nodes with neither are removed.
@@ -110,14 +110,14 @@ struct wkv_edge_t
     struct wkv_node_t node; ///< Base type.
     size_t            seg_len;
     /// This is a flex array; it may be shorter than this depending on the segment length.
-    /// It is always null-terminated, so it can be used as a C string.
+    /// NUL terminator is NOT included here to conserve memory -- WKV does not need it.
     /// https://www.open-std.org/Jtc1/sc22/wg14/www/docs/dr_051.html
-    char seg[WKV_KEY_MAX_LEN + 1];
+    char seg[WKV_KEY_MAX_LEN];
 };
 
 /// When a new entry is inserted, Wild Key-Value needs to allocate tree nodes in the dynamic memory.
 /// Each node with children takes one allocation (zero if no children); each edge takes one allocation always.
-/// Per-edge allocation is of size sizeof(struct wkv_node_t) + sizeof(size_t) + strlen(key_segment) + 1.
+/// Per-edge allocation is of size sizeof(struct wkv_node_t) + sizeof(size_t) + strlen(key_segment).
 /// Per-node allocation is of size n_edges * sizeof(pointer).
 ///
 /// A key segment is the part of a key between separators (e.g. "abc" in "123/abc/456").
@@ -395,7 +395,7 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
                                         const struct wkv_str_t   seg)
 {
     struct wkv_edge_t* const edge =
-      (struct wkv_edge_t*)self->realloc(self, NULL, offsetof(struct wkv_edge_t, seg) + seg.len + 1U);
+      (struct wkv_edge_t*)self->realloc(self, NULL, offsetof(struct wkv_edge_t, seg) + seg.len);
     if (edge != NULL) {
         edge->node.parent  = parent;
         edge->node.n_edges = 0;
@@ -403,7 +403,6 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
         edge->node.value   = NULL;
         edge->seg_len      = seg.len;
         memcpy(&edge->seg[0], seg.str, seg.len);
-        edge->seg[seg.len] = '\0';
     }
     return edge;
 }

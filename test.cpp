@@ -16,6 +16,7 @@
 #include <utility>
 #include <stdexcept>
 #include <optional>
+#include <functional>
 
 void setUp() {}
 
@@ -142,6 +143,9 @@ public:
         }
     };
 
+    explicit Collector() = default;
+    explicit Collector(const std::function<void*(const Hit&)>& done_predicate) : done_predicate_(done_predicate) {}
+
     [[nodiscard]] const std::vector<Hit>& get_matches() const { return matches_; }
 
     [[nodiscard]] const Hit& get_only() const
@@ -175,10 +179,11 @@ private:
         std::string key(node->key_len, '\0');
         wkv_get_key(self, node, key.data());
         matches_.emplace_back(node, key, substitutions);
-        return nullptr;
+        return done_predicate_(matches_.back());
     }
 
-    std::vector<Hit> matches_;
+    std::vector<Hit>                       matches_;
+    const std::function<void*(const Hit&)> done_predicate_ = [](const Hit&) { return nullptr; };
 };
 
 void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
@@ -1008,6 +1013,21 @@ void test_match_4()
     TEST_ASSERT(wkv_is_empty(&kv));
 }
 
+void test_match_early_stop()
+{
+    Memory mem(50);
+    WildKV kv(mem);
+    kv["a/b/1"] = "ab1";
+    kv["a/b/2"] = "ab2";
+    kv["a/c/1"] = "ac1";
+    kv["a/c/2"] = "ac2";
+    kv["a/d/1"] = "ad1";
+    kv["a/d/2"] = "ad2";
+    kv["b/a/1"] = "ba1";
+    kv["b/a/2"] = "ba2";
+    kv.purge();
+}
+
 void test_route()
 {
     Memory mem(50);
@@ -1164,6 +1184,11 @@ void test_route_3()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
+void test_misc()
+{
+    TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
+}
+
 } // namespace
 
 int main(const int argc, const char* const argv[])
@@ -1184,6 +1209,7 @@ int main(const int argc, const char* const argv[])
     RUN_TEST(test_route);
     RUN_TEST(test_route_2);
     RUN_TEST(test_route_3);
+    RUN_TEST(test_misc);
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)
 }

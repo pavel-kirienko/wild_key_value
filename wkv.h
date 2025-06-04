@@ -378,9 +378,10 @@ struct _wkv_split_t
 
 static inline struct _wkv_split_t _wkv_split(const struct wkv_str_t key, const char sep)
 {
-    const char* const   slash   = (key.str != NULL) ? (const char*)memchr(key.str, sep, key.len) : NULL;
+    WKV_ASSERT(key.str != NULL);
+    const char* const   slash   = (const char*)memchr(key.str, sep, key.len);
     const size_t        seg_len = (slash != NULL) ? (size_t)(slash - key.str) : key.len;
-    struct _wkv_split_t out     = {{seg_len, key.str}, {0, NULL}, slash == NULL};
+    struct _wkv_split_t out     = {{seg_len, key.str}, {0, ""}, slash == NULL};
     if (slash != NULL) {
         out.tail.str = slash + 1;
         out.tail.len = key.len - seg_len - 1U;

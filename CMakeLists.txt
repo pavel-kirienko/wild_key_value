@@ -72,8 +72,9 @@ add_test("run_benchy" "benchy")
 # LCOV REPORT
 add_custom_target(lcov
         COMMAND lcov --directory . --capture --output-file coverage.info --mcdc-coverage --branch-coverage
-                     --ignore-errors mismatch
+                     --ignore-errors mismatch --ignore-errors corrupt --ignore-errors inconsistent
         COMMAND genhtml coverage.info --output-directory coverage-html --mcdc-coverage --branch-coverage
+                        --ignore-errors mismatch --ignore-errors corrupt --ignore-errors inconsistent
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         DEPENDS test_wkv
         COMMENT "+++ COVERAGE REPORT: ${CMAKE_BINARY_DIR}/coverage-html/index.html"

@@ -684,7 +684,7 @@ static inline void* _wkv_match_sub_many(const struct _wkv_hit_ctx_t* const    ct
     return result;
 }
 
-/// Matches many-segment substitution (zero or more): a/*/b ==> a/b, a/?/b, a/?/?/b, ...
+/// Matches any-segment substitution (zero or more): a/*/b ==> a/b, a/?/b, a/?/?/b, ...
 static inline void* _wkv_match_sub_any(const struct _wkv_hit_ctx_t* const    ctx,
                                        const struct wkv_node_t* const        node,
                                        const struct _wkv_split_t             qs,

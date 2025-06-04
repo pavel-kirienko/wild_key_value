@@ -1025,6 +1025,55 @@ void test_match_early_stop()
     kv["a/d/2"] = "ad2";
     kv["b/a/1"] = "ba1";
     kv["b/a/2"] = "ba2";
+
+    using Hit                 = Collector::Hit;
+    static const auto val_str = [](const Hit& hit) { return std::string_view(static_cast<const char*>(hit.value)); };
+
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("-" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_NULL(wkv_match(&kv, "**"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ab1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_NULL(wkv_match(&kv, "a/b/2"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ab1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_NULL(wkv_match(&kv, "a/d/?"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ab1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_NULL(wkv_match(&kv, "b/*"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ab1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ab1", wkv_match(&kv, "a/?/1"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ad1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ad1", wkv_match(&kv, "a/?/1"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ad1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ad1", wkv_match(&kv, "*/1"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ba1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ba1", wkv_match(&kv, "b/*/a/1"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ba1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ba1", wkv_match(&kv, "b/*/1"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ba1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ba1", wkv_match(&kv, "*/1"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("ba1" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("ba1", wkv_match(&kv, "?/?/*/1"_wkv, &col, Collector::trampoline));
+    }
+
     kv.purge();
 }
 
@@ -1184,6 +1233,69 @@ void test_route_3()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
+void test_route_early_stop()
+{
+    Memory mem(50);
+    WildKV kv(mem);
+    kv["*"]       = "a";
+    kv["a/b/*"]   = "b";
+    kv["a/d/?"]   = "c";
+    kv["a/*/b"]   = "d";
+    kv["a/?/d"]   = "e";
+    kv["*/?/?"]   = "f";
+    kv["?/?/?"]   = "g";
+    kv["*/*/?/?"] = "h";
+    kv["?/?/*/?"] = "i";
+
+    using Hit                 = Collector::Hit;
+    static const auto val_str = [](const Hit& hit) { return std::string_view(static_cast<const char*>(hit.value)); };
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("-" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_NULL(wkv_route(&kv, "a/b/c"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("a" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("a", wkv_route(&kv, "a/b/c"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("b" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("b", wkv_route(&kv, "a/b/c"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("c" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_NULL(wkv_route(&kv, "a/b/c"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("c" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("c", wkv_route(&kv, "a/d/c"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("d" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("d", wkv_route(&kv, "a/x/b"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("e" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("e", wkv_route(&kv, "a/x/d"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("f" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("f", wkv_route(&kv, "a/x/d"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("g" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("g", wkv_route(&kv, "a/x/d"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("h" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("h", wkv_route(&kv, "a/*/x/y"_wkv, &col, Collector::trampoline));
+    }
+    {
+        Collector col([&](const Hit& hit) -> void* { return ("i" == val_str(hit)) ? hit.value : nullptr; });
+        TEST_ASSERT_EQUAL_STRING("i", wkv_route(&kv, "x/y/z"_wkv, &col, Collector::trampoline));
+    }
+    kv.purge();
+}
+
 void test_misc()
 {
     TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
@@ -1198,18 +1310,25 @@ int main(const int argc, const char* const argv[])
     std::srand(seed);
     // NOLINTBEGIN(misc-include-cleaner)
     UNITY_BEGIN();
+
     RUN_TEST(test_basic);
     RUN_TEST(test_long_keys);
     RUN_TEST(test_backtrack);
     RUN_TEST(test_reconstruct);
+
     RUN_TEST(test_match);
     RUN_TEST(test_match_2);
     RUN_TEST(test_match_3);
     RUN_TEST(test_match_4);
+    RUN_TEST(test_match_early_stop);
+
     RUN_TEST(test_route);
     RUN_TEST(test_route_2);
     RUN_TEST(test_route_3);
+    RUN_TEST(test_route_early_stop);
+
     RUN_TEST(test_misc);
+
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)
 }

@@ -1,34 +1,24 @@
 /// Source: https://github.com/pavel-kirienko/wild_key_value
 ///
-/// Wild Key-Value (WKV) is a very fast and very simple single-header key-value container for embedded systems
-/// that supports wildcard lookup. The keys are strings, and the values are void pointers.
-/// Keys are stored in the heap in fragments; common prefixes are deduplicated so the memory usage is minimized.
+/// Wild Key-Value is a fast and simple single-header key-value container with pattern matching for embedded systems.
+/// Keys are strings, and values are void pointers.
+/// Keys are stored in the heap in fragments; common prefixes are deduplicated so the memory usage is extremely low.
+/// Patterns can be used to look up keys in the container, and also to look up patterns that match a given key;
+/// the latter is called "routing".
 ///
-/// The container is designed for very fast logarithmic lookup and insertion (roughly comparable to std::map),
-/// and is extremely frugal with memory. Internally, it uses bisection comparing key segments by length first
-/// (shorter compares smaller), then lexicographically; this is important in some applications.
-///
-/// The recommended memory manager is O1Heap, which offers constant allocation time and low worst-case fragmentation,
-/// but it works with any other heap (incl. the standard heap) as well.
-///
-/// Example realloc_function using the standard heap (for o1heap it would look similar):
-///
-///     static void* realloc_function(struct wkv_t* const self, void* const ptr, const size_t new_size)
-///     {
-///         if (new_size > 0) { return realloc(ptr, new_size); }
-///         free(ptr);  // Handle freeing explicitly because invoking the standard realloc() with zero size is UB.
-///         return NULL;
-///     }
+/// WKV can be used with any memory manager that provides realloc. The standard realloc() is suitable, but the
+/// recommended memory manager is O1Heap, which offers constant allocation time and low worst-case fragmentation.
 ///
 /// This is the v1 release. When an API-incompatible v2 is published, all definitions will be prefixed with "wkv2"
 /// instead of "wkv", and the file will be renamed to "wkv2.h" to ensure safe coexistence with the v1.
 ///
-/// See also:
-/// - Cavl <https://github.com/pavel-kirienko/cavl> -- a single-header, efficient and robust AVL tree implementation.
-/// - O1Heap <https://github.com/pavel-kirienko/o1heap> -- a deterministic memory manager for hard-real-time
-///   high-integrity embedded systems.
+/// SEE ALSO
 ///
-/// -------------------------------------------------------------------------------------------------------------------
+/// - O1Heap <https://github.com/pavel-kirienko/o1heap> -- a deterministic memory manager for real-time
+///   high-integrity embedded systems.
+/// - Cavl <https://github.com/pavel-kirienko/cavl> -- a single-header, efficient and robust AVL tree implementation.
+///
+/// LICENSE
 ///
 /// Copyright (c) Pavel Kirienko <pavel@opencyphal.org>
 ///
@@ -65,6 +55,13 @@
 #endif
 #endif
 
+/// The default maximum key length is chosen rather arbitrarily. It does not affect the memory consumption or
+/// performance within the container, but it is needed to enforce memory safety applying strlen on the input C strings,
+/// and also it may be used by the application to allocate static key buffers.
+#ifndef WKV_KEY_MAX_LEN
+#define WKV_KEY_MAX_LEN 256U
+#endif
+
 #ifdef __cplusplus
 // This is, strictly speaking, useless because we do not define any functions with external linkage here,
 // but it tells static analyzers that what follows should be interpreted as C code rather than C++.
@@ -74,16 +71,7 @@ extern "C"
 
 // ----------------------------------------         PUBLIC API SECTION         ----------------------------------------
 
-// TODO BETTER DOCS
-
-/// The default maximum key length is chosen rather arbitrarily. It does not affect the memory consumption or
-/// performance within the container, but it is needed to enforce memory safety applying strlen on the input C strings,
-/// and also it may be used by the application to allocate static key buffers.
-#ifndef WKV_KEY_MAX_LEN
-#define WKV_KEY_MAX_LEN 256U
-#endif
-
-/// These can be overridden at runtime on a per-container basis.
+/// These can be overridden at runtime on a per-container basis after wkv_init().
 #define WKV_DEFAULT_SEPARATOR '/'
 #define WKV_DEFAULT_SUB_ONE   '?'
 #define WKV_DEFAULT_SUB_ANY   '*'
@@ -91,6 +79,7 @@ extern "C"
 struct wkv_t;
 
 /// Wild Key-Value uses strings with explicit length for reasons of efficiency and safety.
+/// Use wkv_key() to convert a C string into this type.
 struct wkv_str_t
 {
     size_t      len; ///< Length of the string, excluding the trailing NUL.
@@ -99,7 +88,8 @@ struct wkv_str_t
 
 /// A fundamental invariant of WKV is that every node has a value and/or outgoing edges. Nodes with neither are removed.
 /// Setting the value to NULL manually may cause the node to be garbage collected at any time, so it must be avoided.
-/// The user code MUST NOT change anything except the value pointer.
+///
+/// The user code MUST NOT change anything in this struct except the value pointer.
 struct wkv_node_t
 {
     struct wkv_node_t* parent; ///< NULL if this is the root node.
@@ -126,18 +116,22 @@ struct wkv_edge_t
 };
 
 /// When a new entry is inserted, Wild Key-Value needs to allocate tree nodes in the dynamic memory.
-/// Each node takes one allocation, unless it has no outgoing edges; each edge takes one allocation always.
+/// Each node with children takes one allocation (zero if no children); each edge takes one allocation always.
 /// Per-edge allocation is of size sizeof(struct wkv_node_t) + sizeof(size_t) + strlen(key_segment) + 1.
 /// Per-node allocation is of size n_edges * sizeof(pointer).
 ///
-/// Realloc is used to:
-/// - Allocate new memory with the original pointer being NULL.
-/// - To free memory when the size is zero.
-/// - To resize the edges pointer array when entries are added/removed.
+/// A key segment is the part of a key between separators (e.g. "abc" in "123/abc/456").
+///
+/// New memory is ONLY allocated from wkv_set().
+///
+/// Realloc is used as follows:
+/// - Allocating new memory with the original pointer being NULL.
+/// - Freeing memory when the new size is zero.
+/// - Resizing existing allocation to a new size, which may be larger or smaller than the original size.
 ///
 /// The semantics are per the standard realloc from stdlib, except:
 /// - If the fragment is not increased in size, reallocation MUST succeed.
-/// - If the size is zero, it must behave like free() (which is often the case but technically an UB).
+/// - If the size is zero, it must behave like free() (which is often the case in realloc() but technically an UB).
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
@@ -146,12 +140,12 @@ typedef void* (*wkv_realloc_t)(struct wkv_t* self, void* ptr, size_t new_size);
 /// Hint: pointer to a node with parent=NULL is the pointer to wkv_t of the current tree.
 struct wkv_t
 {
-    struct wkv_node_t root; ///< Base type.
+    struct wkv_node_t root; ///< Base type. Do not alter.
 
-    /// Used to allocate, reallocate, and free memory for the tree nodes and edges.
+    /// See wkv_realloc_t.
     wkv_realloc_t realloc;
 
-    /// Separator character used to split keys into segments. The default is WKV_DEFAULT_SEPARATOR.
+    /// The separator character used to split keys into segments. The default is WKV_DEFAULT_SEPARATOR.
     /// Can be changed to any non-zero character, but it should not be changed while the container is non-empty.
     char sep;
 
@@ -162,7 +156,7 @@ struct wkv_t
     char sub_one; ///< Defaults to WKV_DEFAULT_SUB_ONE.
     char sub_any; ///< Defaults to WKV_DEFAULT_SUB_ANY.
 
-    void* context; ///< Can be assigned by the user code arbitrarily.
+    void* context; ///< Can be mutated by the user code arbitrarily.
 };
 
 // ----------------------------------------    INIT AND AUXILIARY FUNCTIONS    ----------------------------------------
@@ -213,7 +207,7 @@ static inline void wkv_get_key(const struct wkv_t* const self, const struct wkv_
             *--p = self->sep;
         }
     }
-    WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strlen(p) == node->key_len));
+    WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strnlen(p, WKV_KEY_MAX_LEN + 1) == node->key_len));
 }
 
 /// Internally, WKV uses strings with explicit length for performance and safety reasons.
@@ -229,13 +223,14 @@ static inline struct wkv_str_t wkv_key(const char* const str)
     const struct wkv_str_t out = {(str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN * 2) : 0, str};
     return out;
 }
+
 // --------------------------------------    BASIC OPERATIONS ON VERBATIM KEYS    --------------------------------------
 
 /// Creates a new entry and returns its node pointer. If such key already exists, then the existing node is returned.
 /// If OOM or the key is too long, NULL is returned.
 ///
 /// The caller is required to set the value pointer to a non-NULL value after this call; otherwise, the node may be
-/// garbage collected at any time.
+/// garbage collected at any time, or leaked when the container is destroyed.
 ///
 /// This is the only function that may allocate new memory.
 ///
@@ -245,60 +240,58 @@ static inline struct wkv_node_t* wkv_set(struct wkv_t* const self, const struct 
 
 /// This is like wkv_set() except that it doesn't attempt to create a new node if the key does not exist,
 /// returning NULL instead.
-/// The key is treated verbatim (no pattern matching).
-/// Complexity is logarithmic in the number of keys in the container.
 static inline struct wkv_node_t* wkv_get(const struct wkv_t* const self, const struct wkv_str_t key);
 
 /// Deletes a known valid node. Does nothing if the node is NULL.
 /// Behavior undefined if the node does not belong to the container.
+/// The following is valid and safe:
+///     wkv_del(&kv, wkv_get(&kv, wkv_key("key/name"))).
+///
 /// Complexity is logarithmic in the number of keys in the container.
 static inline void wkv_del(struct wkv_t* const self, struct wkv_node_t* const node);
 
-/// Returns the value and key of the element at the specified index in an unspecified order.
-///
-/// The key storage must be at least WKV_KEY_MAX_LEN + 1 bytes large; key_len points to the actual length of
-/// the key buffer, not including the trailing NUL; it will be set to the length of the key that was returned.
-/// If key or key_len are NULL, or if the key buffer is too small, then the key will not be returned.
-/// To check if the key was returned, set key_len to WKV_KEY_MAX_LEN+1 and then check key_len<=WKV_KEY_MAX_LEN.
+/// Returns the value and key of the element at the specified index, or NULL if the index is out of range.
+/// The ordering is unspecified but stable between wkv_set() and wkv_del().
 ///
 /// One could also use wkv_match() with the "*" pattern to list keys, but the difference here is that this function
 /// works for keys composed of arbitrary characters, while wkv_match() assumes that certain characters (substitutions)
 /// have special meaning.
 ///
-/// If the index is out of bounds of self is NULL, then NULL is returned.
-/// The complexity is linear in the number of keys in the container! This is not the primary way to access keys!
-///
 /// Hint: one way to remove all keys from a container is:
 ///     while (!wkv_is_empty(&kv)) {
 ///         wkv_del(&kv, wkv_at(&kv, 0));
 ///     }
+///
+/// The complexity is linear in the number of keys in the container! This is not the primary way to access keys!
 static inline struct wkv_node_t* wkv_at(struct wkv_t* const self, size_t index);
 
 // ----------------------------------------          MATCH/ROUTE API          ----------------------------------------
 
-/// A wildcard is a pattern that contains substitution tokens. WKV currently recognizes the following substitutions:
+/// Search patterns may contain substitution tokens. WKV currently recognizes the following substitutions:
 ///
-/// One-segment substitution: "abc/?/def" -- matches "abc/123/def", with "123" being the substitution.
-/// The one-segment substitution symbol must be the only symbol in the segment;
-/// otherwise, the segment is treated verbatim (matches only itself).
+/// -   One-segment substitution: "abc/?/def" -- matches "abc/123/def", with "123" being the substitution.
+///     The substitution token must be the only text in the segment; otherwise, the segment is treated verbatim.
 ///
-/// Any-segment substitution: "abc/*/def" -- matches any number of segments, including zero;
-/// e.g. "abc/123/456/def", "abc/def".
-/// It is treated as an infinite sequence of one-segment substitutions:
-/// "a/*/z" ==> "a/z", "a/?/z", "a/?/?/z", "a/?/?/?/z", ...
-/// There may be at most one any-segment substitution in the pattern; if more are found, the following occurrences
-/// are treated verbatim (no substitution will take place). This behavior should not be relied upon because it may
-/// change in a future minor revision; hence, patterns with multiple any-segment substitutions should be avoided.
+/// -   Any-segment substitution: "abc/*/def" -- matches any number of segments, including zero;
+///     e.g. "abc/def", "abc/xyz/def", "abc/xyz/qwe/def".
+///     There may be at most one any-segment substitution token in the pattern; if more are found,
+///     the following occurrences are treated verbatim (no substitution will take place).
+///     This behavior, however, should not be relied upon because it may change in a future minor revision;
+///     hence, patterns with multiple any-segment substitutions should be avoided.
+///     The substitution token must be the only text in the segment; otherwise, the segment is treated verbatim.
 ///
-/// The reason for allowing at most one * is that multiple any-segment substitutions create ambiguity in the query,
-/// which in certain scenarios causes the matcher to match the same key multiple times, plus it causes an exponential
-/// increase in the computational complexity. It appears to be difficult to avoid these issues without a significant
-/// performance and memory penalty, hence the limitation is imposed.
+/// The reason for allowing at most one any-segment substitution is that multiple occurrences may result in ambiguous
+/// patterns, which in certain scenarios may match the same key multiple times, plus it causes fast complexity growth.
+/// It is difficult to avoid these issues without a significant performance and memory penalty,
+/// hence the limitation is imposed.
 ///
 /// Hint: a sequence of "?/*" is similar to the glob recursive wildcard "**".
 ///
-/// When a wildcard match occurs, the list of all substitution patterns that matched the corresponding query segments
-/// is reported using this structure. The elements are ordered in the same way as they appear in the query.
+/// When a pattern match occurs, WKV provides a list of substitutions that had to be made to match the key against
+/// the pattern; this is conceptually similar to capture groups in regular expressions.
+/// The elements are ordered in the same way as they appear in the pattern, and each element specifies which
+/// substitution token it is produced for via 'ordinal'.
+///
 /// For example, pattern "abc/?/def/*" matching "abc/123/def/foo/456/xyz" produces the following substitution list,
 /// with the ordinals as specified:
 /// 1. #0 "123"
@@ -306,12 +299,10 @@ static inline struct wkv_node_t* wkv_at(struct wkv_t* const self, size_t index);
 /// 3. #1 "456"
 /// 4. #1 "xyz"
 ///
-/// If the pattern contains only single-segment substitutions, then the number of reported found substitutions equals
-/// the number of substitution segments in the query. If a any-segment substitution is present, then the number of
-/// substitutions may be greater.
+/// Another example: pattern "abc/*/def" matching "abc/def" produces no substitutions.
 struct wkv_substitution_t
 {
-    struct wkv_str_t           str;     ///< The string that matched the wildcard in the query is the base type.
+    struct wkv_str_t           str;     ///< The string that matched the substitution token in the pattern.
     size_t                     ordinal; ///< Zero-based index of the substitution token as occurred in the pattern.
     struct wkv_substitution_t* next;    ///< Next substitution in the linked list, NULL if this is the last one.
 };
@@ -330,21 +321,28 @@ typedef void* (*wkv_callback_t)(struct wkv_t*                    self,
                                 struct wkv_node_t*               node,
                                 const struct wkv_substitution_t* substitutions);
 
+/// Searches for keys in the container that match the specified pattern.
 /// Matching elements are reported in an unspecified order.
 ///
 /// Searching stops when callback returns a non-NULL value, which is then propagated back to the caller.
 /// If no matches are found or callback returns NULL for all matches, then NULL is returned.
 ///
-/// The general computational complexity approaches linear. However, if no substitutions are present in the
-/// query, then the complexity equals that of an ordinary key lookup (logarithmic).
+/// The computational complexity depends on the query. If the query contains no substitution tokens,
+/// the complexity is logarithmic in the number of keys in the container. Any-segment substitutions
+/// are the hardest to evaluate unless positioned at the end of the pattern.
 static inline void* wkv_match(struct wkv_t* const    self,
                               const struct wkv_str_t query,
                               void* const            context,
                               const wkv_callback_t   callback);
 
-/// While wkv_match() searches for keys in a tree that match the pattern,
-/// the route function does the opposite: it searches for patterns in a tree that match the key.
-/// Patterns that match (which are actually keys of the tree) are reported via the callback as usual.
+/// Searches for patterns in the container that match the specified key.
+/// Matching elements are reported in an unspecified order.
+///
+/// Searching stops when callback returns a non-NULL value, which is then propagated back to the caller.
+/// If no matches are found or callback returns NULL for all matches, then NULL is returned.
+///
+/// The computational complexity depends on the keys in the container. If none of the patterns in the container
+/// contain substitution tokens, then the complexity is logarithmic in the number of patterns in the container.
 static inline void* wkv_route(struct wkv_t* const    self,
                               const struct wkv_str_t query,
                               void* const            context,
@@ -408,7 +406,6 @@ static struct wkv_edge_t* _wkv_edge_new(struct wkv_t* const      self,
     return edge;
 }
 
-/// Binary search inside n->edge (which we keep sorted).
 /// Returns negated (insertion point plus one) if the segment is not found.
 static ptrdiff_t _wkv_bisect(const struct wkv_node_t* const node, const struct wkv_str_t seg)
 {
@@ -418,7 +415,6 @@ static ptrdiff_t _wkv_bisect(const struct wkv_node_t* const node, const struct w
         const size_t mid = (lo + hi) / 2U;
         // Ultra-fast comparison thanks to knowing the length of both segments.
         // IMPORTANT: because of the length comparison shortcut, the ordering is not lexicographic!
-        // Rather, same-length segments are compared lexicographically, while shorter segments compare less than longer.
         const ptrdiff_t cmp = (seg.len == node->edges[mid]->seg_len)
                                 ? memcmp(seg.str, node->edges[mid]->seg, seg.len)
                                 : ((ptrdiff_t)seg.len - (ptrdiff_t)node->edges[mid]->seg_len);
@@ -616,6 +612,7 @@ struct _wkv_substitution_list_t
     struct wkv_substitution_t* tail;
 };
 
+/// This is to avoid boilerplate in the substitution token handlers.
 #define _wkv_SUBSTITUTION_APPEND(old_list, new_list, str, ordinal)                                                \
     WKV_ASSERT(ordinal >= 0);                                                                                     \
     struct wkv_substitution_t new_list##_tail = {str, (size_t)ordinal, NULL};                                     \
@@ -628,11 +625,8 @@ struct _wkv_substitution_list_t
 
 // MATCH
 
-/// Currently, we DO NOT support wildcard removal of nodes from the callback, for the sole reason that removal
+/// Currently, we DO NOT support removal of nodes from the callback, for the sole reason that removal
 /// would invalidate our edges traversal state. This can be doctored, if necessary.
-/// One way to do this is to copy the edge pointer array on the stack before traversing it.
-/// Another solution is to bubble up the removal flag to the traversal function so that we can reuse the same
-/// index for the next iteration.
 /// The initial substitution ordinal shall be -1.
 static inline void* _wkv_match(const struct _wkv_hit_ctx_t* const    ctx,
                                const struct wkv_node_t* const        node,

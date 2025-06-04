@@ -53,12 +53,12 @@ target_compile_definitions(unity PUBLIC -DUNITY_SHORTHAND_AS_RAW=1 -DUNITY_OUTPU
 # WKV TEST
 add_executable(test_wkv ${CMAKE_CURRENT_SOURCE_DIR}/test.cpp)
 target_link_libraries(test_wkv unity)
-if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug"))
+if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU") AND (CMAKE_BUILD_TYPE STREQUAL "Debug") AND NO_STATIC_ANALYSIS)
     message(STATUS "Enabling code coverage")
-    target_compile_options(test_wkv PRIVATE -fprofile-arcs -ftest-coverage -g -O0 --coverage)
-    target_link_options(test_wkv PRIVATE -fprofile-arcs -ftest-coverage --coverage)
+    target_compile_options(test_wkv PRIVATE --coverage -fcondition-coverage -g -O0)
+    target_link_options(  test_wkv PRIVATE --coverage)
     target_link_libraries(test_wkv gcov)
-endif ()
+endif()
 add_test("run_test" "test_wkv")
 
 # BENCHY
@@ -68,8 +68,8 @@ add_test("run_benchy" "benchy")
 
 # LCOV REPORT
 add_custom_target(lcov
-        COMMAND lcov --directory . --capture --output-file coverage.info
-        COMMAND genhtml coverage.info --output-directory coverage-html
+        COMMAND lcov --directory . --capture --output-file coverage.info --mcdc-coverage --branch-coverage
+        COMMAND genhtml coverage.info --output-directory coverage-html --mcdc-coverage --branch-coverage
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         DEPENDS test_wkv
         COMMENT "+++ COVERAGE REPORT: ${CMAKE_BINARY_DIR}/coverage-html/index.html"

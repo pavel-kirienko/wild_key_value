@@ -16,7 +16,6 @@ Copy `wkv.h` into your project and include it:
 
 ```c++
 #define WKV_NO_ASSERT   1       ///< Speeds things up by removing runtime invariant checking.
-#define WKV_KEY_MAX_LEN 512     ///< Only used for safe strnlen(); does not affect memory usage.
 #include <wkv.h>
 ```
 
@@ -48,7 +47,7 @@ if (node != NULL) {
         node->value = &my_value;    // Such key already existed; we can reassign it here.
     }
 } else {
-    // Not enough memory, or the key exceeds WKV_KEY_MAX_LEN.
+    // Not enough memory.
 }
 
 // Access existing keys in logarithmic time using wkv_get().
@@ -73,7 +72,7 @@ if (node != NULL) {
 
 // Get the key of a previosuly found node.
 // WKV does not store full keys; instead, a key is reconstructed ad-hoc like so:
-char key_buf[WKV_KEY_MAX_LEN + 1];
+char key_buf[node->key_len + 1];  // you can replace the VLA with an application-specific capacity.
 wkv_get_key(&kv, node, key_buf);
 printf("Key: %s\n", key_buf);
 ```

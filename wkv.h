@@ -55,13 +55,6 @@
 #endif
 #endif
 
-/// The default maximum key length is chosen rather arbitrarily. It does not affect the memory consumption or
-/// performance within the container, but it is needed to enforce memory safety applying strlen on the input C strings,
-/// and also it may be used by the application to allocate static key buffers.
-#ifndef WKV_KEY_MAX_LEN
-#define WKV_KEY_MAX_LEN 256U
-#endif
-
 #ifdef __cplusplus
 // This is, strictly speaking, useless because we do not define any functions with external linkage here,
 // but it tells static analyzers that what follows should be interpreted as C code rather than C++.
@@ -111,8 +104,10 @@ struct wkv_edge_t
     size_t            seg_len;
     /// This is a flex array; it may be shorter than this depending on the segment length.
     /// NUL terminator is NOT included here to conserve memory -- WKV does not need it.
+    /// The size of seg is chosen rather arbitrarily; it has to be some sensible large value (over UINT16_MAX)
+    /// to avoid UB triggered when we access memory beyond the struct footprint; see
     /// https://www.open-std.org/Jtc1/sc22/wg14/www/docs/dr_051.html
-    char seg[WKV_KEY_MAX_LEN];
+    char seg[1ULL << 16U];
 };
 
 /// When a new entry is inserted, Wild Key-Value needs to allocate tree nodes in the dynamic memory.
@@ -184,14 +179,13 @@ static inline bool wkv_is_empty(const struct wkv_t* const self)
 }
 
 /// Writes the full key of the specified node into the buffer, with NUL termination.
-/// The buffer shall be at least (node->key_len+1) or (WKV_KEY_MAX_LEN+1) bytes long.
+/// The buffer shall be at least (node->key_len+1) bytes long.
 /// This function is needed because WKV deduplicates common prefixes of keys, so full keys are not stored anywhere.
 /// This function will rebuild the full key for this node on-demand; the complexity is linear in the key length
 /// (sic! this is not much slower than bare memcpy!).
 static inline void wkv_get_key(const struct wkv_t* const self, const struct wkv_node_t* const node, char* const buf)
 {
     WKV_ASSERT((self != NULL) && (node != NULL) && (buf != NULL));
-    WKV_ASSERT(node->key_len <= WKV_KEY_MAX_LEN);
     char* p                    = &buf[node->key_len];
     *p                         = '\0';
     const struct wkv_node_t* n = node;
@@ -207,20 +201,15 @@ static inline void wkv_get_key(const struct wkv_t* const self, const struct wkv_
             *--p = self->sep;
         }
     }
-    WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strnlen(p, WKV_KEY_MAX_LEN + 1) == node->key_len));
+    WKV_ASSERT((buf[node->key_len] == '\0') && (p == buf) && (strlen(p) == node->key_len));
 }
 
 /// Internally, WKV uses strings with explicit length for performance and safety reasons.
 /// This helper converts a C string into a borrowed view wkv_str_t.
-/// The maximum length is limited to a value strictly greater than WKV_KEY_MAX_LEN to allow detection of overly long
-/// keys; this is important because we cannot simply implicitly truncate keys, as that may result in conflicts if
-/// the truncated keys happens to share a prefix with a valid key.
 /// NULL strings are treated as empty strings.
 static inline struct wkv_str_t wkv_key(const char* const str)
 {
-    // We use a much larger limit in case there are multi-character substitution tokens in the future,
-    // as that may cause valid queries to exceed WKV_KEY_MAX_LEN.
-    const struct wkv_str_t out = {(str != NULL) ? strnlen(str, WKV_KEY_MAX_LEN * 2) : 0, str};
+    const struct wkv_str_t out = {(str != NULL) ? strlen(str) : 0, str};
     return out;
 }
 
@@ -483,9 +472,6 @@ static inline void _wkv_prune_branch(struct wkv_t* const self, struct wkv_node_t
 /// Locates or creates a new node, but does not alter it.
 static inline struct wkv_node_t* _wkv_find_or_insert(struct wkv_t* const self, const struct wkv_str_t key)
 {
-    if (key.len > WKV_KEY_MAX_LEN) {
-        return NULL;
-    }
     struct wkv_node_t*  n = &self->root;
     struct _wkv_split_t x;
     x.tail = key; // Start with the full key.

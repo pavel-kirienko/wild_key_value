@@ -384,7 +384,6 @@ void test_basic()
         for (size_t i = 0; i < expected_count; ++i) {
             TEST_ASSERT(kv[i]);
             const std::string key = kv[i].key().value();
-            TEST_ASSERT(key.size() <= WKV_KEY_MAX_LEN);
             TEST_ASSERT_EQUAL_size_t(1, keys.erase(key));
             // compare against the reference
             TEST_ASSERT_EQUAL_STRING(kv[i].value(), kv[key]);
@@ -410,54 +409,6 @@ void test_basic()
     // Edge cases.
     wkv_del(&kv, nullptr);
     wkv_del(&kv, &kv.root); // no effect
-}
-
-void test_long_keys()
-{
-    Memory mem(18);
-    WildKV kv(mem);
-
-    char long_boy[WKV_KEY_MAX_LEN + 2];
-    std::memset(long_boy, 'a', WKV_KEY_MAX_LEN);
-    long_boy[WKV_KEY_MAX_LEN]     = 0;
-    long_boy[WKV_KEY_MAX_LEN + 1] = 0;
-
-    // Insert max length key successfully.
-    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN, std::strlen(long_boy));
-    kv[long_boy] = "x";
-    TEST_ASSERT_EQUAL_size_t(1, count(&kv));
-    TEST_ASSERT(!wkv_is_empty(&kv));
-
-    // Insert longer key, which should fail.
-    long_boy[WKV_KEY_MAX_LEN] = 'a';
-    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
-    TEST_ASSERT_FALSE(kv[long_boy].add("b"));
-    TEST_ASSERT_EQUAL_size_t(1, count(&kv));
-    TEST_ASSERT(!wkv_is_empty(&kv));
-
-    // Now, request a key that is too long.
-    // If it were to be truncated, it would match the valid long key, which must not happen.
-    long_boy[WKV_KEY_MAX_LEN] = 'a';
-    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
-    TEST_ASSERT_NULL(wkv_get(&kv, ::wkv_key(long_boy)));
-    wkv_del(&kv, ::wkv_get(&kv, ::wkv_key(long_boy)));
-    TEST_ASSERT_EQUAL_size_t(1, count(&kv)); // still there!
-    TEST_ASSERT(!wkv_is_empty(&kv));
-
-    // Wildcard query with a long key.
-    Collector collector;
-    long_boy[WKV_KEY_MAX_LEN] = 'a';
-    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN + 1, std::strlen(long_boy));
-    TEST_ASSERT_NULL(wkv_match(&kv, ::wkv_key(long_boy), &collector, Collector::trampoline));
-
-    // Cleanup.
-    long_boy[WKV_KEY_MAX_LEN] = 0;
-    TEST_ASSERT_EQUAL_size_t(WKV_KEY_MAX_LEN, std::strlen(long_boy));
-    TEST_ASSERT_EQUAL_size_t(1, count(&kv));
-    TEST_ASSERT_EQUAL_STRING("x", wkv_get(&kv, ::wkv_key(long_boy))->value);
-    wkv_del(&kv, ::wkv_get(&kv, ::wkv_key(long_boy)));
-    TEST_ASSERT_EQUAL_size_t(0, count(&kv));
-    TEST_ASSERT(wkv_is_empty(&kv));
 }
 
 void test_backtrack()
@@ -558,7 +509,7 @@ void test_reconstruct()
     kv["/xx//f/"] = "F";
     kv["//"]      = "1";
 
-    char buf[WKV_KEY_MAX_LEN + 1];
+    char buf[1000];
 
     const ::wkv_node_t* n = wkv_get(&kv, {4, "xx/a"});
     TEST_ASSERT_EQUAL_STRING("A", n->value);
@@ -1312,7 +1263,6 @@ int main(const int argc, const char* const argv[])
     UNITY_BEGIN();
 
     RUN_TEST(test_basic);
-    RUN_TEST(test_long_keys);
     RUN_TEST(test_backtrack);
     RUN_TEST(test_reconstruct);
 

@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define WKV_NO_ASSERT   1
-#define WKV_KEY_MAX_LEN 100
+#define WKV_NO_ASSERT 1
 #include "wkv.h"
 
 #define ITERS 100000U
@@ -27,7 +26,7 @@ static void* std_realloc(struct wkv_t* const self, void* const ptr, const size_t
 
 static struct wkv_str_t make_random_key(const size_t idx, const size_t n_segments)
 {
-    char* const key = malloc(WKV_KEY_MAX_LEN + 1U);
+    char* const key = malloc(100);
     if (!key) {
         perror("malloc");
         exit(EXIT_FAILURE);

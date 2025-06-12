@@ -98,15 +98,20 @@ public:
         std::vector<std::pair<std::size_t, std::string>> substitutions;
         void*                                            value = nullptr;
 
-        explicit Hit(::wkv_node_t* const node, const std::string_view key, const ::wkv_substitution_t* const subs)
+        explicit Hit(::wkv_node_t* const               node,
+                     const std::string_view            key,
+                     const std::size_t                 sub_count,
+                     const ::wkv_substitution_t* const subs)
           : key(key)
           , value(node->value)
         {
             const ::wkv_substitution_t* s = subs;
+            substitutions.reserve(sub_count);
             while (s != nullptr) {
                 substitutions.emplace_back(s->ordinal, view(s->str));
                 s = s->next;
             }
+            TEST_ASSERT_EQUAL_size_t(sub_count, substitutions.size());
         }
 
         [[nodiscard]] bool check(const std::string_view                                  key,
@@ -154,12 +159,9 @@ public:
         return matches_.front();
     }
 
-    [[nodiscard]] static void* trampoline(::wkv_t* const                    self,
-                                          void* const                       context,
-                                          ::wkv_node_t* const               node,
-                                          const ::wkv_substitution_t* const substitutions)
+    [[nodiscard]] static void* trampoline(const ::wkv_event_t event)
     {
-        return static_cast<Collector*>(context)->on_hit(self, node, substitutions);
+        return static_cast<Collector*>(event.context)->on_hit(event);
     }
 
     [[maybe_unused]] void print() const
@@ -172,13 +174,11 @@ public:
     }
 
 private:
-    [[nodiscard]] void* on_hit(::wkv_t* const                    self,
-                               ::wkv_node_t* const               node,
-                               const ::wkv_substitution_t* const substitutions)
+    [[nodiscard]] void* on_hit(const ::wkv_event_t event)
     {
-        std::string key(node->key_len, '\0');
-        wkv_get_key(self, node, key.data());
-        matches_.emplace_back(node, key, substitutions);
+        std::string key(event.node->key_len, '\0');
+        wkv_get_key(event.self, event.node, key.data());
+        matches_.emplace_back(event.node, key, event.substitution_count, event.substitutions);
         return done_predicate_(matches_.back());
     }
 

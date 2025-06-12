@@ -296,21 +296,28 @@ struct wkv_substitution_t
     struct wkv_substitution_t* next;    ///< Next substitution in the linked list, NULL if this is the last one.
 };
 
-/// Invoked on every positive result while searching. The value of the node is guaranteed to be non-NULL.
-/// To read or write the value, use node->value. To access the key, use wkv_get_key() with this node.
-///
-/// The substitutions indicate which segments of the key matched corresponding substitution tokens in the pattern.
-/// NULL substitutions indicate that the substitution list is empty.
-///
+struct wkv_event_t
+{
+    struct wkv_t* self;
+
+    /// The node is never NULL.
+    /// Use node->value to read/modify the value.
+    /// Use wkv_get_key() to get the key.
+    struct wkv_node_t* node;
+
+    /// The substitutions indicate which segments of the key matched corresponding substitution tokens in the pattern.
+    /// NULL substitutions indicate that the substitution list is empty.
+    /// The substitution_count is for convenience; note that this is a linked list, not a contiguous array.
+    /// The substitutions pointer is invalidated after the callback returns.
+    size_t                           substitution_count;
+    const struct wkv_substitution_t* substitutions;
+
+    void* context;
+};
+
+/// Invoked on every positive result while searching.
 /// Searching stops when this function returns a non-NULL value, which is then propagated back to the caller.
-/// The full key of the found match will be constructed on stack ad-hoc, so the lifetime of the key pointer
-/// will end upon return from this function, but the value will obviously remain valid as long as the entry exists.
-///
-/// The substitutions pointer is invalidated after the callback returns.
-typedef void* (*wkv_callback_t)(struct wkv_t*                    self,
-                                void*                            context,
-                                struct wkv_node_t*               node,
-                                const struct wkv_substitution_t* substitutions);
+typedef void* (*wkv_callback_t)(struct wkv_event_t);
 
 /// Searches for keys in the container that match the specified pattern.
 /// Matching elements are reported in an unspecified order.
@@ -586,28 +593,33 @@ struct _wkv_hit_ctx_t
     wkv_callback_t callback;
 };
 
-static inline void* _wkv_hit_node(const struct _wkv_hit_ctx_t* const     ctx,
-                                  struct wkv_node_t* const               node,
-                                  const struct wkv_substitution_t* const subs)
-{
-    return (node->value != NULL) ? ctx->callback(ctx->self, ctx->context, node, subs) : NULL;
-}
-
 struct _wkv_substitution_list_t
 {
     struct wkv_substitution_t* head;
     struct wkv_substitution_t* tail;
+    size_t                     count;
 };
 
+static inline void* _wkv_hit_node(const struct _wkv_hit_ctx_t* const           ctx,
+                                  struct wkv_node_t* const                     node,
+                                  const struct _wkv_substitution_list_t* const subs)
+{
+    const struct wkv_event_t evt = {ctx->self, node, subs->count, subs->head, ctx->context};
+    return (node->value != NULL) ? ctx->callback(evt) : NULL;
+}
+
 /// This is to avoid boilerplate in the substitution token handlers.
-#define _wkv_SUBSTITUTION_PUSH(old_list, new_list, str, ordinal)                                                  \
-    WKV_ASSERT(ordinal >= 0);                                                                                     \
-    struct wkv_substitution_t new_list##_tail = {str, (size_t)ordinal, NULL};                                     \
-    if (old_list.tail != NULL) {                                                                                  \
-        old_list.tail->next = &new_list##_tail;                                                                   \
-    }                                                                                                             \
-    const struct _wkv_substitution_list_t new_list = {(old_list.head == NULL) ? &new_list##_tail : old_list.head, \
-                                                      &new_list##_tail};                                          \
+#define _wkv_SUBSTITUTION_PUSH(old_list, new_list, str, ordinal)              \
+    WKV_ASSERT(ordinal >= 0);                                                 \
+    struct wkv_substitution_t new_list##_tail = {str, (size_t)ordinal, NULL}; \
+    if (old_list.tail != NULL) {                                              \
+        old_list.tail->next = &new_list##_tail;                               \
+    }                                                                         \
+    const struct _wkv_substitution_list_t new_list = {                        \
+      (old_list.head == NULL) ? &new_list##_tail : old_list.head,             \
+      &new_list##_tail,                                                       \
+      old_list.count + 1,                                                     \
+    };                                                                        \
     (void)0
 
 /// Substitutions are stack-allocated, so we must unlink entries when leaving a stack frame.
@@ -643,7 +655,7 @@ static inline void* _wkv_match_sub_one(const struct _wkv_hit_ctx_t* const    ctx
     for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
         struct wkv_edge_t* const edge = node->edges[i];
         _wkv_SUBSTITUTION_PUSH(subs, subs_new, _wkv_edge_seg(edge), sub_ord);
-        result = qs.last ? _wkv_hit_node(ctx, &edge->node, subs_new.head)
+        result = qs.last ? _wkv_hit_node(ctx, &edge->node, &subs_new)
                          : _wkv_match(ctx, &edge->node, qs_next, sub_ord, subs_new, any_seen);
         _wkv_SUBSTITUTION_POP(subs);
     }
@@ -663,7 +675,7 @@ static inline void* _wkv_match_sub_many(const struct _wkv_hit_ctx_t* const    ct
     for (size_t i = 0; (i < node->n_edges) && (result == NULL); ++i) {
         struct wkv_edge_t* const edge = node->edges[i];
         _wkv_SUBSTITUTION_PUSH(subs, subs_new, _wkv_edge_seg(edge), sub_ord);
-        result = qs.last ? _wkv_hit_node(ctx, &edge->node, subs_new.head)
+        result = qs.last ? _wkv_hit_node(ctx, &edge->node, &subs_new)
                          : _wkv_match(ctx, &edge->node, qs_next, sub_ord, subs_new, true);
         if (result == NULL) {
             subs_new.tail->next = NULL;
@@ -708,7 +720,7 @@ static inline void* _wkv_match(const struct _wkv_hit_ctx_t* const    ctx,
     const ptrdiff_t k = _wkv_bisect(node, qs.head);
     if (k >= 0) {
         struct wkv_edge_t* const edge = node->edges[k];
-        return qs.last ? _wkv_hit_node(ctx, &edge->node, subs.head)
+        return qs.last ? _wkv_hit_node(ctx, &edge->node, &subs)
                        : _wkv_match(ctx, &edge->node, _wkv_split(qs.tail, ctx->self->sep), sub_ord, subs, any_seen);
     }
     return NULL;
@@ -736,7 +748,7 @@ static inline void* _wkv_route_sub_one(const struct _wkv_hit_ctx_t* const    ctx
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     _wkv_SUBSTITUTION_PUSH(subs, subs_new, qs.head, sub_ord);
     void* const result =
-      qs.last ? _wkv_hit_node(ctx, &edge->node, subs_new.head)
+      qs.last ? _wkv_hit_node(ctx, &edge->node, &subs_new)
               : _wkv_route(ctx, &edge->node, _wkv_split(qs.tail, ctx->self->sep), sub_ord, subs_new, any_seen);
     _wkv_SUBSTITUTION_POP(subs);
     return result;
@@ -752,7 +764,7 @@ static inline void* _wkv_route_sub_any(const struct _wkv_hit_ctx_t* const    ctx
     void* result = _wkv_route(ctx, &edge->node, qs, sub_ord, subs, true);
     if (result == NULL) {
         _wkv_SUBSTITUTION_PUSH(subs, subs_new, qs.head, sub_ord);
-        result = qs.last ? _wkv_hit_node(ctx, &edge->node, subs_new.head)
+        result = qs.last ? _wkv_hit_node(ctx, &edge->node, &subs_new)
                          : _wkv_route_sub_any(ctx, edge, _wkv_split(qs.tail, ctx->self->sep), sub_ord, subs_new);
         _wkv_SUBSTITUTION_POP(subs);
     }
@@ -788,7 +800,7 @@ static inline void* _wkv_route(const struct _wkv_hit_ctx_t* const    ctx,
             struct wkv_edge_t* const edge = node->edges[k];
             // _wkv_route() is a tail call
             result = qs.last
-                       ? _wkv_hit_node(ctx, &edge->node, subs.head)
+                       ? _wkv_hit_node(ctx, &edge->node, &subs)
                        : _wkv_route(ctx, &edge->node, _wkv_split(qs.tail, ctx->self->sep), sub_ord, subs, any_seen);
         }
     }
@@ -803,7 +815,7 @@ static inline void* wkv_match(struct wkv_t* const    self,
                               const wkv_callback_t   callback)
 {
     const struct _wkv_hit_ctx_t           ctx  = {self, context, callback};
-    const struct _wkv_substitution_list_t subs = {NULL, NULL};
+    const struct _wkv_substitution_list_t subs = {NULL, NULL, 0};
     return _wkv_match(&ctx, &self->root, _wkv_split(query, self->sep), -1, subs, false);
 }
 
@@ -813,7 +825,7 @@ static inline void* wkv_route(struct wkv_t* const    self,
                               const wkv_callback_t   callback)
 {
     const struct _wkv_hit_ctx_t           ctx  = {self, context, callback};
-    const struct _wkv_substitution_list_t subs = {NULL, NULL};
+    const struct _wkv_substitution_list_t subs = {NULL, NULL, 0};
     return _wkv_route(&ctx, &self->root, _wkv_split(query, self->sep), -1, subs, false);
 }
 

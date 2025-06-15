@@ -213,6 +213,10 @@ static inline struct wkv_str_t wkv_key(const char* const str)
     return out;
 }
 
+/// Quickly checks if the key has any valid substitution tokens in it.
+/// This can be used to discriminate between verbatim keys and match patterns.
+static inline bool wkv_has_substitution_tokens(const struct wkv_t* const self, const struct wkv_str_t key);
+
 // --------------------------------------    BASIC OPERATIONS ON VERBATIM KEYS    --------------------------------------
 
 /// Creates a new entry and returns its node pointer. If such key already exists, then the existing node is returned.
@@ -582,6 +586,15 @@ static inline struct wkv_node_t* wkv_at(struct wkv_t* const self, size_t index)
 {
     WKV_ASSERT(self != NULL);
     return _wkv_at(&self->root, &index);
+}
+
+static inline bool wkv_has_substitution_tokens(const struct wkv_t* const self, const struct wkv_str_t key)
+{
+    const struct _wkv_split_t x = _wkv_split(key, self->sep);
+    if ((x.head.len == 1) && ((x.head.str[0] == self->sub_one) || (x.head.str[0] == self->sub_any))) {
+        return true;
+    }
+    return x.last ? false : wkv_has_substitution_tokens(self, x.tail); // tail call
 }
 
 // ---------------------------------    FAST PATTERN MATCHING / KEY ROUTING ENGINE     ---------------------------------

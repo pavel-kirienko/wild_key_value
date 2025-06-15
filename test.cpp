@@ -1247,6 +1247,40 @@ void test_route_early_stop()
     kv.purge();
 }
 
+void test_has_substitution_tokens()
+{
+    Memory mem(50);
+    WildKV kv(mem);
+
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, ""_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "/"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "/a"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "a/"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "a/b/c"_wkv));
+
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "??"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "*?/a"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "?x/a"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "a/?x"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "a/x?"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "a/x?/c"_wkv));
+    TEST_ASSERT_FALSE(::wkv_has_substitution_tokens(&kv, "a/?x/c"_wkv));
+
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "?"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "?/a"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "?/a"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/?"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/?"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/?/c"_wkv));
+
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "*"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "*/a"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "*/a"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/*"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/*"_wkv));
+    TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/*/c"_wkv));
+}
+
 void test_misc()
 {
     TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
@@ -1277,6 +1311,7 @@ int main(const int argc, const char* const argv[])
     RUN_TEST(test_route_3);
     RUN_TEST(test_route_early_stop);
 
+    RUN_TEST(test_has_substitution_tokens);
     RUN_TEST(test_misc);
 
     return UNITY_END();

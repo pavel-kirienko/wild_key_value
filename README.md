@@ -22,7 +22,7 @@ Copy `wkv.h` into your project and include it:
 Define the realloc function. If you're using the standard heap, it would look as follows:
 
 ```c++
-static void* my_realloc(struct wkv_t* const self, void* const ptr, const size_t new_size)
+static void* my_realloc(wkv_t* const self, void* const ptr, const size_t new_size)
 {
     if (new_size > 0) { return realloc(ptr, new_size); }
     free(ptr);  // Handle freeing explicitly because invoking the standard realloc() with zero size is UB.

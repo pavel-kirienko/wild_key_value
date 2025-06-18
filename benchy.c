@@ -14,7 +14,7 @@
 #define ITERS 100000U
 static const char ALPHABET[] = "abc";
 
-static void* std_realloc(struct wkv_t* const self, void* const ptr, const size_t new_size)
+static void* std_realloc(wkv_t* const self, void* const ptr, const size_t new_size)
 {
     (void)self;
     if (new_size > 0) {
@@ -24,7 +24,7 @@ static void* std_realloc(struct wkv_t* const self, void* const ptr, const size_t
     return NULL;
 }
 
-static struct wkv_str_t make_random_key(const size_t idx, const size_t n_segments)
+static wkv_str_t make_random_key(const size_t idx, const size_t n_segments)
 {
     char* const key = malloc(100);
     if (!key) {
@@ -53,12 +53,12 @@ static double now(void)
     return ts.tv_sec + (1e-9 * ts.tv_nsec);
 }
 
-static void print_tree(const struct wkv_node_t* const node, const size_t depth)
+static void print_tree(const wkv_node_t* const node, const size_t depth)
 {
     const int indent = (int)(depth * 2);
     for (size_t i = 0; i < node->n_edges; ++i) {
-        const struct wkv_edge_t* const edge = node->edges[i];
-        char                           value[256];
+        const wkv_edge_t* const edge = node->edges[i];
+        char                    value[256];
         if (edge->node.value != NULL) {
             (void)snprintf(value, sizeof(value), "%p", edge->node.value);
         } else {
@@ -79,11 +79,11 @@ int main(int argc, char* argv[])
     // 1. Prepare dataset and container
     // ------------------------------------------------------------------
     fprintf(stderr, "Preparing the test with %lu keys...\n", key_count);
-    struct wkv_str_t keys[key_count];
+    wkv_str_t keys[key_count];
     for (size_t i = 0; i < key_count; ++i) {
         keys[i] = make_random_key(i, (size_t)round(log10(key_count)));
     }
-    struct wkv_t kv;
+    wkv_t kv;
     wkv_init(&kv, std_realloc);
 
     // ------------------------------------------------------------------

@@ -18,15 +18,9 @@
 #include <optional>
 #include <functional>
 
-void
-setUp()
-{
-}
+void setUp() {}
 
-void
-tearDown()
-{
-}
+void tearDown() {}
 
 namespace {
 
@@ -85,14 +79,12 @@ private:
     std::size_t oom_count_      = 0;
 };
 
-[[nodiscard]] std::string_view
-view(const ::wkv_str_t& str)
+[[nodiscard]] std::string_view view(const ::wkv_str_t& str)
 {
     return (str.len > 0) ? std::string_view(str.str, str.len) : std::string_view("");
 }
 
-::wkv_str_t
-operator""_wkv(const char* v, const std::size_t sz)
+::wkv_str_t operator""_wkv(const char* v, const std::size_t sz)
 {
     return {sz, v};
 }
@@ -194,8 +186,7 @@ private:
     const std::function<void*(const Hit&)> done_predicate_ = [](const Hit&) { return nullptr; };
 };
 
-void
-print(const ::wkv_node_t* const node, const std::size_t depth = 0)
+void print(const ::wkv_node_t* const node, const std::size_t depth = 0)
 {
     const auto indent = static_cast<int>(depth * 2);
     for (std::size_t i = 0; i < node->n_edges; ++i) {
@@ -212,14 +203,12 @@ print(const ::wkv_node_t* const node, const std::size_t depth = 0)
         print(&edge->node, depth + 1);
     }
 }
-void
-print(const ::wkv_t* const kv)
+void print(const ::wkv_t* const kv)
 {
     print(&kv->root);
 }
 
-[[nodiscard]] std::size_t
-count(const ::wkv_node_t* const node)
+[[nodiscard]] std::size_t count(const ::wkv_node_t* const node)
 {
     std::size_t c = (node->value != nullptr) ? 1 : 0;
     for (std::size_t i = 0; i < node->n_edges; ++i) {
@@ -230,14 +219,12 @@ count(const ::wkv_node_t* const node)
     }
     return c;
 }
-[[nodiscard]] std::size_t
-count(const ::wkv_t* const node)
+[[nodiscard]] std::size_t count(const ::wkv_t* const node)
 {
     return count(&node->root);
 }
 
-wkv_str_t
-wkv_key(const std::string_view str)
+wkv_str_t wkv_key(const std::string_view str)
 {
     return {str.length(), str.data()};
 }
@@ -353,8 +340,7 @@ public:
     [[nodiscard]] IndexProxy operator[](const std::size_t index) { return IndexProxy(this, ::wkv_at(this, index)); }
 };
 
-void
-test_basic()
+void test_basic()
 {
     Memory mem(18);
     WildKV kv(mem);
@@ -425,8 +411,7 @@ test_basic()
     wkv_del(&kv, &kv.root); // no effect
 }
 
-void
-test_backtrack()
+void test_backtrack()
 {
     {
         Memory mem(0);
@@ -511,8 +496,7 @@ test_backtrack()
     }
 }
 
-void
-test_reconstruct()
+void test_reconstruct()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -567,8 +551,7 @@ test_reconstruct()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void
-test_match()
+void test_match()
 {
     Memory mem(25);
     WildKV kv(mem);
@@ -768,8 +751,7 @@ test_match()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void
-test_match_2()
+void test_match_2()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -913,8 +895,7 @@ test_match_2()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void
-test_match_3()
+void test_match_3()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -955,8 +936,7 @@ test_match_3()
     TEST_ASSERT(wkv_is_empty(&kv));
 }
 
-void
-test_match_4()
+void test_match_4()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -984,8 +964,7 @@ test_match_4()
     TEST_ASSERT(wkv_is_empty(&kv));
 }
 
-void
-test_match_early_stop()
+void test_match_early_stop()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -1049,8 +1028,7 @@ test_match_early_stop()
     kv.purge();
 }
 
-void
-test_route()
+void test_route()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -1167,8 +1145,7 @@ test_route()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void
-test_route_2()
+void test_route_2()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -1184,8 +1161,7 @@ test_route_2()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void
-test_route_3()
+void test_route_3()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -1208,8 +1184,7 @@ test_route_3()
     TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
 }
 
-void
-test_route_early_stop()
+void test_route_early_stop()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -1272,8 +1247,7 @@ test_route_early_stop()
     kv.purge();
 }
 
-void
-test_has_substitution_tokens()
+void test_has_substitution_tokens()
 {
     Memory mem(50);
     WildKV kv(mem);
@@ -1307,16 +1281,14 @@ test_has_substitution_tokens()
     TEST_ASSERT(::wkv_has_substitution_tokens(&kv, "a/*/c"_wkv));
 }
 
-void
-test_misc()
+void test_misc()
 {
     TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
 }
 
 } // namespace
 
-int
-main(const int argc, const char* const argv[])
+int main(const int argc, const char* const argv[])
 {
     const auto seed = static_cast<unsigned>((argc > 1) ? std::atoll(argv[1]) : std::time(nullptr)); // NOLINT
     std::printf("Randomness seed: %u\n", seed);

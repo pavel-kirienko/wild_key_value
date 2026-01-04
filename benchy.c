@@ -14,8 +14,7 @@
 #define ITERS 100000U
 static const char ALPHABET[] = "abc";
 
-static void*
-std_realloc(wkv_t* const self, void* const ptr, const size_t new_size)
+static void* std_realloc(wkv_t* const self, void* const ptr, const size_t new_size)
 {
     (void)self;
     if (new_size > 0) {
@@ -25,8 +24,7 @@ std_realloc(wkv_t* const self, void* const ptr, const size_t new_size)
     return NULL;
 }
 
-static wkv_str_t
-make_random_key(const size_t idx, const size_t n_segments)
+static wkv_str_t make_random_key(const size_t idx, const size_t n_segments)
 {
     char* const key = malloc(100);
     if (!key) {
@@ -48,16 +46,14 @@ make_random_key(const size_t idx, const size_t n_segments)
     return wkv_key(key);
 }
 
-static double
-now(void)
+static double now(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + (1e-9 * ts.tv_nsec);
 }
 
-static void
-print_tree(const wkv_node_t* const node, const size_t depth)
+static void print_tree(const wkv_node_t* const node, const size_t depth)
 {
     const int indent = (int)(depth * 2);
     for (size_t i = 0; i < node->n_edges; ++i) {
@@ -73,8 +69,7 @@ print_tree(const wkv_node_t* const node, const size_t depth)
     }
 }
 
-int
-main(int argc, char* argv[])
+int main(int argc, char* argv[])
 {
     srand((unsigned)time(NULL));
 

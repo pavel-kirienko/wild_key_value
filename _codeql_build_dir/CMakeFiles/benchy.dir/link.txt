@@ -1,1 +1,0 @@
-/home/runner/work/wild_key_value/.codeql-scratch/dbs/cpp/working/autobuild/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/benchy.dir/link.d CMakeFiles/benchy.dir/benchy.c.o -o benchy  -lm

@@ -35,6 +35,7 @@ Mkfile.old
 dkms.conf
 build*/
 cmake-build*/
+_codeql*/
 __pycache__/
 .metadata
 .settings

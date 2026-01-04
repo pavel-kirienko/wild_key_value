@@ -134,9 +134,8 @@ struct wkv_edge_t
 /// - Freeing memory when the new size is zero.
 /// - Resizing existing allocation to a new size, which may be larger or smaller than the original size.
 ///
-/// The semantics are per the standard realloc from stdlib, except:
-/// - If the fragment is not increased in size, reallocation MUST succeed.
-/// - If the size is zero, it must behave like free() (which is often the case in realloc() but technically an UB).
+/// The semantics are per the standard realloc from stdlib, except that if the size is zero,
+/// it must behave like free() (which is often the case in realloc() but technically an UB).
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
 typedef void* (*wkv_realloc_t)(wkv_t* self, void* ptr, size_t new_size);
@@ -454,12 +453,19 @@ static ptrdiff_t _wkv_locate_in_parent(wkv_node_t* const node)
 }
 
 /// Downsize the edges pointer array of the node to the current number of edges.
-/// Infallible because we require that realloc always succeeds when the size is non-increased.
+/// Infallible: if shrinking fails, keep using the existing allocation because it remains valid and is large enough.
 static inline void _wkv_shrink(wkv_t* const self, wkv_node_t* const node)
 {
     if (node->edges != NULL) {
-        node->edges = (wkv_edge_t**)self->realloc(self, node->edges, node->n_edges * sizeof(wkv_edge_t*));
-        WKV_ASSERT((node->edges != NULL) || (node->n_edges == 0));
+        const size_t       new_size = node->n_edges * sizeof(wkv_edge_t*);
+        wkv_edge_t** const shrunk   = (wkv_edge_t**)self->realloc(self, (void*)node->edges, new_size);
+        if (new_size == 0U) {
+            node->edges = NULL;
+        } else if (shrunk != NULL) {
+            node->edges = shrunk;
+        } else {
+            (void)0; // realloc failed to shrink, keep using the original (larger) block.
+        }
     }
 }
 

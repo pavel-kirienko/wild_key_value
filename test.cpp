@@ -14,6 +14,7 @@
 #include <vector>
 #include <unordered_set>
 #include <utility>
+#include <tuple>
 #include <stdexcept>
 #include <optional>
 #include <functional>
@@ -94,9 +95,9 @@ class Collector final
 public:
     struct Hit
     {
-        std::string                                      key;
-        std::vector<std::pair<std::size_t, std::string>> substitutions;
-        void*                                            value = nullptr;
+        std::string                                                         key;
+        std::vector<std::tuple<std::size_t, std::string, std::size_t>>     substitutions;
+        void*                                                               value = nullptr;
 
         explicit Hit(::wkv_node_t* const               node,
                      const std::string_view            key,
@@ -108,7 +109,7 @@ public:
             const ::wkv_substitution_t* s = subs;
             substitutions.reserve(sub_count);
             while (s != nullptr) {
-                substitutions.emplace_back(s->ordinal, view(s->str));
+                substitutions.emplace_back(s->ordinal, view(s->str), s->offset);
                 s = s->next;
             }
             TEST_ASSERT_EQUAL_size_t(sub_count, substitutions.size());
@@ -117,6 +118,23 @@ public:
         [[nodiscard]] bool check(const std::string_view                                  key,
                                  const std::vector<std::pair<std::size_t, std::string>>& substitutions,
                                  const char* const                                       value) const
+        {
+            // Legacy check without offset validation - just check ordinal and str
+            if (this->key != key || this->substitutions.size() != substitutions.size()) {
+                return false;
+            }
+            for (std::size_t i = 0; i < substitutions.size(); ++i) {
+                if (std::get<0>(this->substitutions[i]) != substitutions[i].first ||
+                    std::get<1>(this->substitutions[i]) != substitutions[i].second) {
+                    return false;
+                }
+            }
+            return std::string_view(static_cast<const char*>(this->value)) == value;
+        }
+
+        [[nodiscard]] bool check_with_offsets(const std::string_view                                             key,
+                                               const std::vector<std::tuple<std::size_t, std::string, std::size_t>>& substitutions,
+                                               const char* const                                                  value) const
         {
             return (this->key == key) && (this->substitutions.size() == substitutions.size()) &&
                    std::equal(this->substitutions.begin(), this->substitutions.end(), substitutions.begin()) &&
@@ -142,7 +160,7 @@ public:
                 if (!result.empty()) {
                     result += " ";
                 }
-                result += "#" + std::to_string(s.first) + ":" + s.second;
+                result += "#" + std::to_string(std::get<0>(s)) + ":" + std::get<1>(s) + "@" + std::to_string(std::get<2>(s));
             }
             return result;
         }
@@ -1286,6 +1304,118 @@ void test_misc()
     TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
 }
 
+void test_match_offsets()
+{
+    Memory mem(50);
+    WildKV kv(mem);
+
+    // Insert test keys
+    kv["a/b/c"]     = "abc";
+    kv["x/y/z"]     = "xyz";
+    kv["foo/bar"]   = "foobar";
+    kv["hello/world/test"] = "hwt";
+
+    // Test single ? substitution - offset should point to the matched segment
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "?/b/c"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("a/b/c", {{0, "a", 0}}, "abc"));
+    }
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "a/?/c"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("a/b/c", {{0, "b", 2}}, "abc"));
+    }
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "a/b/?"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("a/b/c", {{0, "c", 4}}, "abc"));
+    }
+
+    // Test multiple ? substitutions
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "?/?/?"_wkv, &col, Collector::trampoline));
+        const auto& matches = col.get_matches();
+        // Some keys have only 2 segments (foo/bar), not 3, so they won't match ?/?/?
+        TEST_ASSERT_EQUAL_size_t(3, matches.size());
+        TEST_ASSERT(matches[0].check_with_offsets("a/b/c", {{0, "a", 0}, {1, "b", 2}, {2, "c", 4}}, "abc"));
+        TEST_ASSERT(matches[1].check_with_offsets("x/y/z", {{0, "x", 0}, {1, "y", 2}, {2, "z", 4}}, "xyz"));
+        TEST_ASSERT(matches[2].check_with_offsets("hello/world/test", {{0, "hello", 0}, {1, "world", 6}, {2, "test", 12}}, "hwt"));
+    }
+
+    // Test * substitution - should capture all remaining segments
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "a/*"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("a/b/c", {{0, "b", 2}, {0, "c", 4}}, "abc"));
+    }
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "hello/*"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("hello/world/test", {{0, "world", 6}, {0, "test", 12}}, "hwt"));
+    }
+
+    // Test mixed ? and * patterns
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_match(&kv, "?/*/test"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("hello/world/test", {{0, "hello", 0}, {1, "world", 6}}, "hwt"));
+    }
+
+    kv.purge();
+}
+
+void test_route_offsets()
+{
+    Memory mem(50);
+    WildKV kv(mem);
+
+    // Insert test patterns
+    kv["?/b/?"]     = "01";
+    kv["a/?/c"]     = "02";
+    kv["?/?/?"]     = "03";
+    kv["*/x"]       = "04";
+    kv["hello/?/*"] = "05";
+
+    // Test routing with single segment
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_route(&kv, "a/b/c"_wkv, &col, Collector::trampoline));
+        const auto& matches = col.get_matches();
+        TEST_ASSERT_EQUAL_size_t(3, matches.size());
+        // Order is: ?/?/?, ?/b/?, a/?/c (based on tree traversal)
+        TEST_ASSERT(matches[0].check_with_offsets("?/?/?", {{0, "a", 0}, {1, "b", 2}, {2, "c", 4}}, "03"));
+        TEST_ASSERT(matches[1].check_with_offsets("?/b/?", {{0, "a", 0}, {1, "c", 4}}, "01"));
+        TEST_ASSERT(matches[2].check_with_offsets("a/?/c", {{0, "b", 2}}, "02"));
+    }
+
+    // Test routing with * pattern
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_route(&kv, "foo/bar/x"_wkv, &col, Collector::trampoline));
+        const auto& matches = col.get_matches();
+        // It matches both ?/?/? and */x
+        TEST_ASSERT_EQUAL_size_t(2, matches.size());
+        TEST_ASSERT(matches[0].check_with_offsets("?/?/?", {{0, "foo", 0}, {1, "bar", 4}, {2, "x", 8}}, "03"));
+        TEST_ASSERT(matches[1].check_with_offsets("*/x", {{0, "foo", 0}, {0, "bar", 4}}, "04"));
+    }
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_route(&kv, "x"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("*/x", {}, "04"));
+    }
+
+    // Test routing with mixed ? and *
+    {
+        Collector col;
+        TEST_ASSERT_NULL(wkv_route(&kv, "hello/world/foo/bar"_wkv, &col, Collector::trampoline));
+        TEST_ASSERT(col.get_only().check_with_offsets("hello/?/*", {{0, "world", 6}, {1, "foo", 12}, {1, "bar", 16}}, "05"));
+    }
+
+    kv.purge();
+}
+
 } // namespace
 
 int main(const int argc, const char* const argv[])
@@ -1313,6 +1443,9 @@ int main(const int argc, const char* const argv[])
 
     RUN_TEST(test_has_substitution_tokens);
     RUN_TEST(test_misc);
+
+    RUN_TEST(test_match_offsets);
+    RUN_TEST(test_route_offsets);
 
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)

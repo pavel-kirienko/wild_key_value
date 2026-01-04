@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <stdexcept>
 #include <optional>
@@ -77,6 +78,77 @@ private:
     std::size_t fragments_peak_ = 0;
     std::size_t fragments_cap_  = 0;
     std::size_t oom_count_      = 0;
+};
+
+class ShrinkFailureMemory final
+{
+public:
+    ShrinkFailureMemory()                                      = default;
+    ShrinkFailureMemory(const ShrinkFailureMemory&)            = delete;
+    ShrinkFailureMemory& operator=(const ShrinkFailureMemory&) = delete;
+    ShrinkFailureMemory(ShrinkFailureMemory&&)                 = delete;
+    ShrinkFailureMemory& operator=(ShrinkFailureMemory&&)      = delete;
+    ~ShrinkFailureMemory()
+    {
+        for (const auto& [ptr, _] : allocations_) {
+            std::free(ptr);
+        }
+        TEST_ASSERT_EQUAL_size_t(0, allocations_.size());
+    }
+
+    void fail_next_shrink() { fail_next_shrink_ = true; }
+
+    [[nodiscard]] std::size_t shrink_failure_count() const { return shrink_failure_count_; }
+
+    [[nodiscard]] std::size_t allocation_count() const { return allocations_.size(); }
+
+    // ReSharper disable once CppParameterMayBeConstPtrOrRef
+    [[nodiscard]] static void* trampoline(wkv_t* const self, void* const ptr, const std::size_t new_size)
+    {
+        return static_cast<ShrinkFailureMemory*>(self->context)->realloc(ptr, new_size);
+    }
+
+private:
+    [[nodiscard]] void* realloc(void* const ptr, const std::size_t new_size)
+    {
+        if (ptr == nullptr) {
+            if (new_size == 0) {
+                return nullptr;
+            }
+            void* const p = std::malloc(new_size);
+            if (p != nullptr) {
+                allocations_[p] = new_size;
+            }
+            return p;
+        }
+
+        const auto it = allocations_.find(ptr);
+        TEST_ASSERT(it != allocations_.end());
+        const auto old_size = it->second;
+
+        if ((new_size < old_size) && (new_size > 0) && fail_next_shrink_) {
+            fail_next_shrink_ = false;
+            ++shrink_failure_count_;
+            return nullptr; // Keep using the original allocation.
+        }
+
+        if (new_size == 0) {
+            std::free(ptr);
+            allocations_.erase(it);
+            return nullptr;
+        }
+
+        void* const p = std::realloc(ptr, new_size);
+        if (p != nullptr) {
+            allocations_.erase(it);
+            allocations_[p] = new_size;
+        }
+        return p;
+    }
+
+    std::unordered_map<void*, std::size_t> allocations_;
+    bool                                   fail_next_shrink_     = false;
+    std::size_t                            shrink_failure_count_ = 0;
 };
 
 [[nodiscard]] std::string_view view(const ::wkv_str_t& str)
@@ -494,6 +566,50 @@ void test_backtrack()
         TEST_ASSERT_EQUAL_size_t(0, count(&kv));
         TEST_ASSERT_EQUAL_size_t(0, mem.get_fragments());
     }
+}
+
+void test_shrink_realloc_failure()
+{
+    ShrinkFailureMemory mem;
+    ::wkv_t             kv{};
+    ::wkv_init(&kv, ShrinkFailureMemory::trampoline);
+    kv.context = &mem;
+
+    mem.fail_next_shrink();
+
+    static char a_val[] = "A";
+    static char b_val[] = "B";
+    static char c_val[] = "C";
+
+    ::wkv_node_t* const node_a = ::wkv_set(&kv, wkv_key("a"));
+    TEST_ASSERT_NOT_NULL(node_a);
+    node_a->value              = a_val;
+    ::wkv_node_t* const node_b = ::wkv_set(&kv, wkv_key("b"));
+    TEST_ASSERT_NOT_NULL(node_b);
+    node_b->value = b_val;
+    TEST_ASSERT_EQUAL_size_t(2, count(&kv));
+    wkv_edge_t** const edges_before = kv.root.edges;
+    TEST_ASSERT(edges_before != nullptr);
+
+    ::wkv_del(&kv, node_a); // Shrinking root from 2 edges to 1 will fail once.
+    TEST_ASSERT_EQUAL_size_t(1, count(&kv));
+    TEST_ASSERT_EQUAL_PTR(edges_before, kv.root.edges);
+    TEST_ASSERT_EQUAL_size_t(1, mem.shrink_failure_count());
+
+    const ::wkv_node_t* const remaining = ::wkv_get(&kv, wkv_key("b"));
+    TEST_ASSERT_NOT_NULL(remaining);
+    TEST_ASSERT_EQUAL_STRING("B", static_cast<const char*>(remaining->value));
+
+    ::wkv_node_t* const node_c = ::wkv_set(&kv, wkv_key("c"));
+    TEST_ASSERT_NOT_NULL(node_c);
+    node_c->value = c_val;
+    TEST_ASSERT_EQUAL_size_t(2, count(&kv));
+
+    ::wkv_del(&kv, node_b);
+    ::wkv_del(&kv, node_c);
+    TEST_ASSERT(::wkv_is_empty(&kv));
+    TEST_ASSERT_EQUAL_size_t(0, count(&kv));
+    TEST_ASSERT_EQUAL_size_t(0, mem.allocation_count());
 }
 
 void test_reconstruct()
@@ -1298,6 +1414,7 @@ int main(const int argc, const char* const argv[])
 
     RUN_TEST(test_basic);
     RUN_TEST(test_backtrack);
+    RUN_TEST(test_shrink_realloc_failure);
     RUN_TEST(test_reconstruct);
 
     RUN_TEST(test_match);

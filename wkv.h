@@ -135,7 +135,6 @@ struct wkv_edge_t
 /// - Resizing existing allocation to a new size, which may be larger or smaller than the original size.
 ///
 /// The semantics are per the standard realloc from stdlib, except:
-/// - If the fragment is not increased in size, reallocation MUST succeed.
 /// - If the size is zero, it must behave like free() (which is often the case in realloc() but technically an UB).
 ///
 /// The recommended allocator is O1Heap: https://github.com/pavel-kirienko/o1heap
@@ -167,7 +166,8 @@ struct wkv_t
 // ----------------------------------------    INIT AND AUXILIARY FUNCTIONS    ----------------------------------------
 
 /// Once created, the instance must not be moved, unless empty.
-static inline void wkv_init(wkv_t* const self, const wkv_realloc_t realloc)
+static inline void
+wkv_init(wkv_t* const self, const wkv_realloc_t realloc)
 {
     WKV_ASSERT((self != NULL) && (realloc != NULL));
     memset(self, 0, sizeof(wkv_t));
@@ -182,7 +182,8 @@ static inline void wkv_init(wkv_t* const self, const wkv_realloc_t realloc)
 }
 
 /// True if the container has no keys.
-static inline bool wkv_is_empty(const wkv_t* const self)
+static inline bool
+wkv_is_empty(const wkv_t* const self)
 {
     WKV_ASSERT(self != NULL);
     return self->root.n_edges == 0;
@@ -193,7 +194,8 @@ static inline bool wkv_is_empty(const wkv_t* const self)
 /// This function is needed because WKV deduplicates common prefixes of keys, so full keys are not stored anywhere.
 /// This function will rebuild the full key for this node on-demand; the complexity is linear in the key length
 /// (sic! this is not much slower than bare memcpy!).
-static inline void wkv_get_key(const wkv_t* const self, const wkv_node_t* const node, char* const buf)
+static inline void
+wkv_get_key(const wkv_t* const self, const wkv_node_t* const node, char* const buf)
 {
     WKV_ASSERT((self != NULL) && (node != NULL) && (buf != NULL));
     char* p             = &buf[node->key_len];
@@ -217,7 +219,8 @@ static inline void wkv_get_key(const wkv_t* const self, const wkv_node_t* const 
 /// Internally, WKV uses strings with explicit length for performance and safety reasons.
 /// This helper converts a C string into a borrowed view wkv_str_t.
 /// NULL strings are treated as empty strings.
-static inline wkv_str_t wkv_key(const char* const str)
+static inline wkv_str_t
+wkv_key(const char* const str)
 {
     const wkv_str_t out = {(str != NULL) ? strlen(str) : 0, str};
     return out;
@@ -225,7 +228,8 @@ static inline wkv_str_t wkv_key(const char* const str)
 
 /// Quickly checks if the key has any valid substitution tokens in it.
 /// This can be used to discriminate between verbatim keys and match patterns.
-static inline bool wkv_has_substitution_tokens(const wkv_t* const self, const wkv_str_t key);
+static inline bool
+wkv_has_substitution_tokens(const wkv_t* const self, const wkv_str_t key);
 
 // --------------------------------------    BASIC OPERATIONS ON VERBATIM KEYS    --------------------------------------
 
@@ -239,11 +243,13 @@ static inline bool wkv_has_substitution_tokens(const wkv_t* const self, const wk
 ///
 /// The key is treated verbatim (no pattern matching).
 /// Complexity is logarithmic in the number of keys in the container.
-static inline wkv_node_t* wkv_set(wkv_t* const self, const wkv_str_t key);
+static inline wkv_node_t*
+wkv_set(wkv_t* const self, const wkv_str_t key);
 
 /// This is like wkv_set() except that it doesn't attempt to create a new node if the key does not exist,
 /// returning NULL instead.
-static inline wkv_node_t* wkv_get(const wkv_t* const self, const wkv_str_t key);
+static inline wkv_node_t*
+wkv_get(const wkv_t* const self, const wkv_str_t key);
 
 /// Deletes a known valid node. Does nothing if the node is NULL.
 /// Behavior undefined if the node does not belong to the container.
@@ -251,7 +257,8 @@ static inline wkv_node_t* wkv_get(const wkv_t* const self, const wkv_str_t key);
 ///     wkv_del(&kv, wkv_get(&kv, wkv_key("key/name"))).
 ///
 /// Complexity is logarithmic in the number of keys in the container.
-static inline void wkv_del(wkv_t* const self, wkv_node_t* const node);
+static inline void
+wkv_del(wkv_t* const self, wkv_node_t* const node);
 
 /// Returns the value and key of the element at the specified index, or NULL if the index is out of range.
 /// The ordering is unspecified but stable between wkv_set() and wkv_del().
@@ -266,7 +273,8 @@ static inline void wkv_del(wkv_t* const self, wkv_node_t* const node);
 ///     }
 ///
 /// The complexity is linear in the number of keys in the container! This is not the primary way to access keys!
-static inline wkv_node_t* wkv_at(wkv_t* const self, size_t index);
+static inline wkv_node_t*
+wkv_at(wkv_t* const self, size_t index);
 
 // ----------------------------------------          MATCH/ROUTE API          ----------------------------------------
 
@@ -342,10 +350,8 @@ typedef void* (*wkv_callback_t)(wkv_event_t);
 /// The computational complexity depends on the query. If the query contains no substitution tokens,
 /// the complexity is logarithmic in the number of keys in the container. Any-segment substitutions
 /// are the hardest to evaluate unless positioned at the end of the pattern.
-static inline void* wkv_match(wkv_t* const         self,
-                              const wkv_str_t      query,
-                              void* const          context,
-                              const wkv_callback_t callback);
+static inline void*
+wkv_match(wkv_t* const self, const wkv_str_t query, void* const context, const wkv_callback_t callback);
 
 /// Searches for patterns in the container that match the specified key.
 /// Matching elements are reported in an unspecified order.
@@ -355,10 +361,8 @@ static inline void* wkv_match(wkv_t* const         self,
 ///
 /// The computational complexity depends on the keys in the container. If none of the patterns in the container
 /// contain substitution tokens, then the complexity is logarithmic in the number of patterns in the container.
-static inline void* wkv_route(wkv_t* const         self,
-                              const wkv_str_t      query,
-                              void* const          context,
-                              const wkv_callback_t callback);
+static inline void*
+wkv_route(wkv_t* const self, const wkv_str_t query, void* const context, const wkv_callback_t callback);
 
 // ====================================================================================================================
 // ----------------------------------------     END OF PUBLIC API SECTION      ----------------------------------------
@@ -366,14 +370,16 @@ static inline void* wkv_route(wkv_t* const         self,
 // ----------------------------------------      POLICE LINE DO NOT CROSS      ----------------------------------------
 // ====================================================================================================================
 
-static inline void _wkv_free(wkv_t* const self, void* const ptr)
+static inline void
+_wkv_free(wkv_t* const self, void* const ptr)
 {
     if (ptr != NULL) {
         (void)self->realloc(self, ptr, 0);
     }
 }
 
-static inline wkv_str_t _wkv_edge_seg(const wkv_edge_t* const edge)
+static inline wkv_str_t
+_wkv_edge_seg(const wkv_edge_t* const edge)
 {
     const wkv_str_t out = {edge->seg_len, edge->seg};
     return out;
@@ -386,7 +392,8 @@ typedef struct
     bool      last;
 } _wkv_split_t;
 
-static inline _wkv_split_t _wkv_split(const wkv_str_t key, const char sep)
+static inline _wkv_split_t
+_wkv_split(const wkv_str_t key, const char sep)
 {
     WKV_ASSERT(key.str != NULL);
     const char* const slash   = (const char*)memchr(key.str, sep, key.len);
@@ -400,7 +407,8 @@ static inline _wkv_split_t _wkv_split(const wkv_str_t key, const char sep)
 }
 
 /// Allocates the edge and its key segment in the same dynamically-sized memory block.
-static wkv_edge_t* _wkv_edge_new(wkv_t* const self, wkv_node_t* const parent, const wkv_str_t seg)
+static wkv_edge_t*
+_wkv_edge_new(wkv_t* const self, wkv_node_t* const parent, const wkv_str_t seg)
 {
     wkv_edge_t* const edge = (wkv_edge_t*)self->realloc(self, NULL, offsetof(wkv_edge_t, seg) + seg.len);
     if (edge != NULL) {
@@ -415,7 +423,8 @@ static wkv_edge_t* _wkv_edge_new(wkv_t* const self, wkv_node_t* const parent, co
 }
 
 /// Returns negated (insertion point plus one) if the segment is not found.
-static ptrdiff_t _wkv_bisect(const wkv_node_t* const node, const wkv_str_t seg)
+static ptrdiff_t
+_wkv_bisect(const wkv_node_t* const node, const wkv_str_t seg)
 {
     size_t lo = 0;
     size_t hi = node->n_edges;
@@ -440,7 +449,8 @@ static ptrdiff_t _wkv_bisect(const wkv_node_t* const node, const wkv_str_t seg)
 
 /// Returns the index of the edge pointing to this node in the parent's edge array.
 /// If the node is the root, then -1 is returned.
-static ptrdiff_t _wkv_locate_in_parent(wkv_node_t* const node)
+static ptrdiff_t
+_wkv_locate_in_parent(wkv_node_t* const node)
 {
     const wkv_node_t* const parent = node->parent;
     if (parent != NULL) {
@@ -454,18 +464,26 @@ static ptrdiff_t _wkv_locate_in_parent(wkv_node_t* const node)
 }
 
 /// Downsize the edges pointer array of the node to the current number of edges.
-/// Infallible because we require that realloc always succeeds when the size is non-increased.
-static inline void _wkv_shrink(wkv_t* const self, wkv_node_t* const node)
+/// If realloc fails on shrinkage, the old allocation is kept, which is safe but uses more memory.
+static inline void
+_wkv_shrink(wkv_t* const self, wkv_node_t* const node)
 {
     if (node->edges != NULL) {
-        node->edges = (wkv_edge_t**)self->realloc(self, node->edges, node->n_edges * sizeof(wkv_edge_t*));
-        WKV_ASSERT((node->edges != NULL) || (node->n_edges == 0));
+        wkv_edge_t** const new_edges =
+          (wkv_edge_t**)self->realloc(self, node->edges, node->n_edges * sizeof(wkv_edge_t*));
+        if ((new_edges != NULL) || (node->n_edges == 0)) {
+            // Update the pointer if realloc succeeded, or if we shrunk to zero (in which case realloc frees and returns
+            // NULL).
+            node->edges = new_edges;
+        }
+        // If realloc fails during shrinkage to a non-zero size, we keep the old allocation. This is safe.
     }
 }
 
 /// Starting from a leaf node, go up the tree and remove all nodes whose trace does not eventually lead to a full key.
 /// This is intended for aborting insertions when we run out of memory and have to backtrack.
-static inline void _wkv_prune_branch(wkv_t* const self, wkv_node_t* const node)
+static inline void
+_wkv_prune_branch(wkv_t* const self, wkv_node_t* const node)
 {
     _wkv_shrink(self, node);
     if ((node->n_edges == 0) && (node->value == NULL)) {
@@ -488,7 +506,8 @@ static inline void _wkv_prune_branch(wkv_t* const self, wkv_node_t* const node)
 }
 
 /// Locates or creates a new node, but does not alter it.
-static inline wkv_node_t* _wkv_find_or_insert(wkv_t* const self, const wkv_str_t key)
+static inline wkv_node_t*
+_wkv_find_or_insert(wkv_t* const self, const wkv_str_t key)
 {
     wkv_node_t*  n = &self->root;
     _wkv_split_t x;
@@ -526,7 +545,8 @@ static inline wkv_node_t* _wkv_find_or_insert(wkv_t* const self, const wkv_str_t
 }
 
 /// Will return empty nodes as well! Not suitable for direct API exposure.
-static inline wkv_node_t* _wkv_get(const wkv_t* const self, const wkv_node_t* const node, const wkv_str_t key)
+static inline wkv_node_t*
+_wkv_get(const wkv_t* const self, const wkv_node_t* const node, const wkv_str_t key)
 {
     const _wkv_split_t x = _wkv_split(key, self->sep);
     const ptrdiff_t    k = _wkv_bisect(node, x.head);
@@ -539,7 +559,8 @@ static inline wkv_node_t* _wkv_get(const wkv_t* const self, const wkv_node_t* co
     return NULL;
 }
 
-static inline wkv_node_t* _wkv_at(wkv_node_t* const node, size_t* const index)
+static inline wkv_node_t*
+_wkv_at(wkv_node_t* const node, size_t* const index)
 {
     if (node->value != NULL) {
         if (*index == 0) {
@@ -556,7 +577,8 @@ static inline wkv_node_t* _wkv_at(wkv_node_t* const node, size_t* const index)
     return NULL;
 }
 
-static inline wkv_node_t* wkv_set(wkv_t* const self, const wkv_str_t key)
+static inline wkv_node_t*
+wkv_set(wkv_t* const self, const wkv_str_t key)
 {
     WKV_ASSERT(self != NULL);
     wkv_node_t* const node = _wkv_find_or_insert(self, key);
@@ -569,7 +591,8 @@ static inline wkv_node_t* wkv_set(wkv_t* const self, const wkv_str_t key)
     return node;
 }
 
-static inline wkv_node_t* wkv_get(const wkv_t* const self, const wkv_str_t key)
+static inline wkv_node_t*
+wkv_get(const wkv_t* const self, const wkv_str_t key)
 {
     WKV_ASSERT(self != NULL);
     wkv_node_t* const node = _wkv_get(self, &self->root, key);
@@ -578,7 +601,8 @@ static inline wkv_node_t* wkv_get(const wkv_t* const self, const wkv_str_t key)
     return ((node == NULL) || (node->value == NULL)) ? NULL : node;
 }
 
-static inline void wkv_del(wkv_t* const self, wkv_node_t* const node)
+static inline void
+wkv_del(wkv_t* const self, wkv_node_t* const node)
 {
     WKV_ASSERT(self != NULL);
     if ((node != NULL) && (node->parent != NULL)) {
@@ -587,13 +611,15 @@ static inline void wkv_del(wkv_t* const self, wkv_node_t* const node)
     }
 }
 
-static inline wkv_node_t* wkv_at(wkv_t* const self, size_t index)
+static inline wkv_node_t*
+wkv_at(wkv_t* const self, size_t index)
 {
     WKV_ASSERT(self != NULL);
     return _wkv_at(&self->root, &index);
 }
 
-static inline bool wkv_has_substitution_tokens(const wkv_t* const self, const wkv_str_t key)
+static inline bool
+wkv_has_substitution_tokens(const wkv_t* const self, const wkv_str_t key)
 {
     const _wkv_split_t x = _wkv_split(key, self->sep);
     if ((x.head.len == 1) && ((x.head.str[0] == self->sub_one) || (x.head.str[0] == self->sub_any))) {
@@ -618,9 +644,8 @@ typedef struct
     size_t              count;
 } _wkv_substitution_list_t;
 
-static inline void* _wkv_hit_node(const _wkv_hit_ctx_t* const           ctx,
-                                  wkv_node_t* const                     node,
-                                  const _wkv_substitution_list_t* const subs)
+static inline void*
+_wkv_hit_node(const _wkv_hit_ctx_t* const ctx, wkv_node_t* const node, const _wkv_substitution_list_t* const subs)
 {
     const wkv_event_t evt = {ctx->self, node, subs->count, subs->head, ctx->context};
     return (node->value != NULL) ? ctx->callback(evt) : NULL;
@@ -652,20 +677,22 @@ static inline void* _wkv_hit_node(const _wkv_hit_ctx_t* const           ctx,
 /// Currently, we DO NOT support removal of nodes from the callback, for the sole reason that removal
 /// would invalidate our edges traversal state. This can be doctored, if necessary.
 /// The initial substitution ordinal shall be -1.
-static inline void* _wkv_match(const _wkv_hit_ctx_t* const    ctx,
-                               const wkv_node_t* const        node,
-                               const _wkv_split_t             qs,
-                               const ptrdiff_t                sub_ord,
-                               const _wkv_substitution_list_t subs,
-                               const bool                     any_seen);
+static inline void*
+_wkv_match(const _wkv_hit_ctx_t* const    ctx,
+           const wkv_node_t* const        node,
+           const _wkv_split_t             qs,
+           const ptrdiff_t                sub_ord,
+           const _wkv_substitution_list_t subs,
+           const bool                     any_seen);
 
 /// Matches one-segment substitution: a/?/b
-static inline void* _wkv_match_sub_one(const _wkv_hit_ctx_t* const    ctx,
-                                       const wkv_node_t* const        node,
-                                       const _wkv_split_t             qs,
-                                       const ptrdiff_t                sub_ord,
-                                       const _wkv_substitution_list_t subs,
-                                       const bool                     any_seen)
+static inline void*
+_wkv_match_sub_one(const _wkv_hit_ctx_t* const    ctx,
+                   const wkv_node_t* const        node,
+                   const _wkv_split_t             qs,
+                   const ptrdiff_t                sub_ord,
+                   const _wkv_substitution_list_t subs,
+                   const bool                     any_seen)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     void*              result  = NULL;
@@ -681,11 +708,12 @@ static inline void* _wkv_match_sub_one(const _wkv_hit_ctx_t* const    ctx,
 }
 
 /// Matches many-segment substitution (one or more): a/+/b ==> a/?/b, a/?/?/b, a/?/?/?/b, ...
-static inline void* _wkv_match_sub_many(const _wkv_hit_ctx_t* const    ctx,
-                                        const wkv_node_t* const        node,
-                                        const _wkv_split_t             qs,
-                                        const ptrdiff_t                sub_ord,
-                                        const _wkv_substitution_list_t subs)
+static inline void*
+_wkv_match_sub_many(const _wkv_hit_ctx_t* const    ctx,
+                    const wkv_node_t* const        node,
+                    const _wkv_split_t             qs,
+                    const ptrdiff_t                sub_ord,
+                    const _wkv_substitution_list_t subs)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     const _wkv_split_t qs_next = qs.last ? qs : _wkv_split(qs.tail, ctx->self->sep);
@@ -705,11 +733,12 @@ static inline void* _wkv_match_sub_many(const _wkv_hit_ctx_t* const    ctx,
 }
 
 /// Matches any-segment substitution (zero or more): a/*/b ==> a/b, a/?/b, a/?/?/b, ...
-static inline void* _wkv_match_sub_any(const _wkv_hit_ctx_t* const    ctx,
-                                       const wkv_node_t* const        node,
-                                       const _wkv_split_t             qs,
-                                       const ptrdiff_t                sub_ord,
-                                       const _wkv_substitution_list_t subs)
+static inline void*
+_wkv_match_sub_any(const _wkv_hit_ctx_t* const    ctx,
+                   const wkv_node_t* const        node,
+                   const _wkv_split_t             qs,
+                   const ptrdiff_t                sub_ord,
+                   const _wkv_substitution_list_t subs)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     void* result = qs.last ? NULL : _wkv_match(ctx, node, _wkv_split(qs.tail, ctx->self->sep), sub_ord, subs, true);
@@ -719,12 +748,13 @@ static inline void* _wkv_match_sub_any(const _wkv_hit_ctx_t* const    ctx,
     return result;
 }
 
-static inline void* _wkv_match(const _wkv_hit_ctx_t* const    ctx,
-                               const wkv_node_t* const        node,
-                               const _wkv_split_t             qs,
-                               const ptrdiff_t                sub_ord,
-                               const _wkv_substitution_list_t subs,
-                               const bool                     any_seen)
+static inline void*
+_wkv_match(const _wkv_hit_ctx_t* const    ctx,
+           const wkv_node_t* const        node,
+           const _wkv_split_t             qs,
+           const ptrdiff_t                sub_ord,
+           const _wkv_substitution_list_t subs,
+           const bool                     any_seen)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     const bool x_any = (qs.head.len == 1) && (qs.head.str[0] == ctx->self->sub_any) && (!any_seen);
@@ -749,19 +779,21 @@ static inline void* _wkv_match(const _wkv_hit_ctx_t* const    ctx,
 /// The any_seen is used to track occurrences of the any-segment substitution pattern in the path.
 /// We do not allow more than one per path to manage the search complexity and avoid double-matching the query key.
 /// The initial substitution ordinal shall be -1.
-static inline void* _wkv_route(const _wkv_hit_ctx_t* const    ctx,
-                               const wkv_node_t* const        node,
-                               const _wkv_split_t             qs,
-                               const ptrdiff_t                sub_ord,
-                               const _wkv_substitution_list_t subs,
-                               const bool                     any_seen);
+static inline void*
+_wkv_route(const _wkv_hit_ctx_t* const    ctx,
+           const wkv_node_t* const        node,
+           const _wkv_split_t             qs,
+           const ptrdiff_t                sub_ord,
+           const _wkv_substitution_list_t subs,
+           const bool                     any_seen);
 
-static inline void* _wkv_route_sub_one(const _wkv_hit_ctx_t* const    ctx,
-                                       wkv_edge_t* const              edge,
-                                       const _wkv_split_t             qs,
-                                       const ptrdiff_t                sub_ord,
-                                       const _wkv_substitution_list_t subs,
-                                       const bool                     any_seen)
+static inline void*
+_wkv_route_sub_one(const _wkv_hit_ctx_t* const    ctx,
+                   wkv_edge_t* const              edge,
+                   const _wkv_split_t             qs,
+                   const ptrdiff_t                sub_ord,
+                   const _wkv_substitution_list_t subs,
+                   const bool                     any_seen)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     _wkv_SUBSTITUTION_PUSH(subs, subs_new, qs.head, sub_ord);
@@ -772,11 +804,12 @@ static inline void* _wkv_route_sub_one(const _wkv_hit_ctx_t* const    ctx,
     return result;
 }
 
-static inline void* _wkv_route_sub_any(const _wkv_hit_ctx_t* const    ctx,
-                                       wkv_edge_t* const              edge,
-                                       const _wkv_split_t             qs,
-                                       const ptrdiff_t                sub_ord,
-                                       const _wkv_substitution_list_t subs)
+static inline void*
+_wkv_route_sub_any(const _wkv_hit_ctx_t* const    ctx,
+                   wkv_edge_t* const              edge,
+                   const _wkv_split_t             qs,
+                   const ptrdiff_t                sub_ord,
+                   const _wkv_substitution_list_t subs)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     void* result = _wkv_route(ctx, &edge->node, qs, sub_ord, subs, true);
@@ -789,12 +822,13 @@ static inline void* _wkv_route_sub_any(const _wkv_hit_ctx_t* const    ctx,
     return result;
 }
 
-static inline void* _wkv_route(const _wkv_hit_ctx_t* const    ctx,
-                               const wkv_node_t* const        node,
-                               const _wkv_split_t             qs,
-                               const ptrdiff_t                sub_ord,
-                               const _wkv_substitution_list_t subs,
-                               const bool                     any_seen)
+static inline void*
+_wkv_route(const _wkv_hit_ctx_t* const    ctx,
+           const wkv_node_t* const        node,
+           const _wkv_split_t             qs,
+           const ptrdiff_t                sub_ord,
+           const _wkv_substitution_list_t subs,
+           const bool                     any_seen)
 {
     WKV_ASSERT((subs.tail == NULL) || (subs.tail->next == NULL));
     void* result = NULL;
@@ -827,20 +861,16 @@ static inline void* _wkv_route(const _wkv_hit_ctx_t* const    ctx,
 
 // ----------------------------------------        wkv_match / wkv_route        ----------------------------------------
 
-static inline void* wkv_match(wkv_t* const         self,
-                              const wkv_str_t      query,
-                              void* const          context,
-                              const wkv_callback_t callback)
+static inline void*
+wkv_match(wkv_t* const self, const wkv_str_t query, void* const context, const wkv_callback_t callback)
 {
     const _wkv_hit_ctx_t           ctx  = {self, context, callback};
     const _wkv_substitution_list_t subs = {NULL, NULL, 0};
     return _wkv_match(&ctx, &self->root, _wkv_split(query, self->sep), -1, subs, false);
 }
 
-static inline void* wkv_route(wkv_t* const         self,
-                              const wkv_str_t      query,
-                              void* const          context,
-                              const wkv_callback_t callback)
+static inline void*
+wkv_route(wkv_t* const self, const wkv_str_t query, void* const context, const wkv_callback_t callback)
 {
     const _wkv_hit_ctx_t           ctx  = {self, context, callback};
     const _wkv_substitution_list_t subs = {NULL, NULL, 0};

@@ -3,8 +3,6 @@ IndentWidth: 4
 ColumnLimit: 120
 Standard: c++20
 IndentExternBlock: NoIndent
-AlwaysBreakAfterDefinitionReturnType: None
-BreakAfterReturnType: None
 AccessModifierOffset: -4
 PackConstructorInitializers: CurrentLine
 AlignConsecutiveAssignments: true
@@ -12,7 +10,7 @@ AlignConsecutiveBitFields: true
 AlignConsecutiveDeclarations: true
 AlignConsecutiveMacros: true
 AlignConsecutiveShortCaseStatements: { Enabled: true }
-AlignEscapedNewlines: LeftWithLastLine
+AlignEscapedNewlines: Left
 AlignTrailingComments: true
 SortIncludes: false
 Cpp11BracedListStyle: true

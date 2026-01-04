@@ -72,8 +72,8 @@ private:
             if (fragments_ <= fragments_cap_) {
                 return std::realloc(ptr, new_size);
             }
-            // When realloc fails (OOM), the original pointer remains valid per standard realloc semantics.
-            // We don't free it here; it will be freed later when WKV calls us with new_size == 0.
+            // When realloc fails, the original pointer remains valid per standard semantics.
+            // WKV will free it later with new_size == 0.
         }
         ++oom_count_;
         return nullptr;

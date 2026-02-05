@@ -9,7 +9,7 @@
 #include <time.h>
 
 #define WKV_NO_ASSERT 1
-#include "wkv.h"
+#include "wild_key_value.h"
 
 #define ITERS 100000U
 static const char ALPHABET[] = "abc";

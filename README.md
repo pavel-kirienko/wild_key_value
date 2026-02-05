@@ -12,11 +12,11 @@ the latter is called "routing".
 
 ## Usage
 
-Copy `wkv.h` into your project and include it:
+Copy `wild_key_value.h` into your project and include it:
 
 ```c++
 #define WKV_NO_ASSERT   1       ///< Speeds things up by removing runtime invariant checking.
-#include <wkv.h>
+#include <wild_key_value.h>
 ```
 
 Define the realloc function. If you're using the standard heap, it would look as follows:

@@ -307,6 +307,9 @@ public:
     explicit WildKV(Memory& mem) : ::wkv_t{}
     {
         ::wkv_init(this, Memory::trampoline);
+        // Keep test patterns stable regardless of default token changes.
+        this->sub_one = '?';
+        this->sub_any = '*';
         this->context = &mem;
         TEST_ASSERT(empty());
     }
@@ -1402,6 +1405,16 @@ void test_misc()
     TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
 }
 
+void test_default_substitution_tokens()
+{
+    Memory  mem(0);
+    ::wkv_t kv{};
+    ::wkv_init(&kv, Memory::trampoline);
+    kv.context = &mem;
+    TEST_ASSERT_EQUAL_CHAR('*', kv.sub_one);
+    TEST_ASSERT_EQUAL_CHAR('>', kv.sub_any);
+}
+
 } // namespace
 
 int main(const int argc, const char* const argv[])
@@ -1430,6 +1443,7 @@ int main(const int argc, const char* const argv[])
 
     RUN_TEST(test_has_substitution_tokens);
     RUN_TEST(test_misc);
+    RUN_TEST(test_default_substitution_tokens);
 
     return UNITY_END();
     // NOLINTEND(misc-include-cleaner)

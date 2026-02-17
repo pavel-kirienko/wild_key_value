@@ -34,6 +34,8 @@ Module.symvers
 Mkfile.old
 dkms.conf
 build*/
+_codeql_build_dir/
+_codeql_detected_source_root
 cmake-build*/
 __pycache__/
 .metadata

@@ -1402,6 +1402,7 @@ void test_has_substitution_tokens()
 
 void test_misc()
 {
+    TEST_ASSERT_EQUAL_size_t(3, ::wkv_key("abc").len);
     TEST_ASSERT_EQUAL_size_t(0, ::wkv_key(nullptr).len);
 }
 
